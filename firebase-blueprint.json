@@ -1,0 +1,141 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access control",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email", "description": "User email" },
+        "name": { "type": "string", "description": "User display name" },
+        "role": { "type": "string", "enum": ["admin", "director", "engineer", "staff", "viewer"], "description": "User role" },
+        "position": { "type": "string", "description": "Job position" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Construction project details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Project ID" },
+        "name": { "type": "string", "description": "Project name" },
+        "type": { "type": "string", "description": "Project type" },
+        "fiscalYear": { "type": "integer", "description": "Fiscal year" },
+        "budget": { "type": "number", "description": "Project budget" },
+        "contractor": { "type": "string", "description": "Contractor name" },
+        "startDate": { "type": "string", "format": "date", "description": "Start date" },
+        "endDate": { "type": "string", "format": "date", "description": "End date" },
+        "status": { "type": "string", "description": "Current status" },
+        "progress": { "type": "integer", "description": "Progress percentage" },
+        "lat": { "type": "number", "description": "Latitude" },
+        "lng": { "type": "number", "description": "Longitude" },
+        "responsiblePerson": { "type": "string", "description": "Person in charge" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update" }
+      },
+      "required": ["id", "name", "status", "progress"]
+    },
+    "ProgressReport": {
+      "title": "Progress Report",
+      "description": "Daily or periodic progress updates",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "reportDate": { "type": "string", "format": "date" },
+        "progressPercent": { "type": "integer" },
+        "details": { "type": "string" },
+        "issues": { "type": "string" },
+        "photos": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["projectId", "reportDate", "progressPercent"]
+    },
+    "Inspection": {
+      "title": "Inspection",
+      "description": "Official inspection records",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "inspectionDate": { "type": "string", "format": "date" },
+        "inspector": { "type": "string" },
+        "result": { "type": "string", "enum": ["Pass", "Fix", "Fail"] },
+        "suggestions": { "type": "string" },
+        "photos": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["projectId", "inspectionDate", "inspector", "result"]
+    },
+    "Disbursement": {
+      "title": "Disbursement",
+      "description": "Budget payment tracking",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "installment": { "type": "integer" },
+        "paymentDate": { "type": "string", "format": "date" },
+        "amount": { "type": "number" },
+        "remainingBudget": { "type": "number" },
+        "attachments": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["projectId", "installment", "amount"]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "Project related documents",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "type": { "type": "string", "enum": ["TOR", "BOQ", "Drawing", "Contract", "Inspection Report"] },
+        "fileUrl": { "type": "string" },
+        "uploadDate": { "type": "string", "format": "date-time" },
+        "uploader": { "type": "string" }
+      },
+      "required": ["projectId", "type", "fileUrl"]
+    },
+    "BudgetImport": {
+      "title": "Budget Import",
+      "description": "Imported budget project records for fiscal year 2569",
+      "type": "object",
+      "properties": {
+        "fiscalYear": { "type": "integer" },
+        "projectName": { "type": "string" },
+        "category": { "type": "string" },
+        "villageNo": { "type": "integer" },
+        "villageName": { "type": "string" },
+        "description": { "type": "string" },
+        "budget": { "type": "number" },
+        "sourceFile": { "type": "string" },
+        "importDate": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fiscalYear", "projectName", "budget"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Construction project documents"
+    },
+    "/progress_reports/{reportId}": {
+      "schema": "ProgressReport",
+      "description": "Progress report documents"
+    },
+    "/inspections/{inspectionId}": {
+      "schema": "Inspection",
+      "description": "Inspection documents"
+    },
+    "/disbursements/{disbursementId}": {
+      "schema": "Disbursement",
+      "description": "Disbursement documents"
+    },
+    "/documents/{documentId}": {
+      "schema": "Document",
+      "description": "Project documents"
+    },
+    "/budget_imports/{importId}": {
+      "schema": "BudgetImport",
+      "description": "Imported budget records"
+    }
+  }
+}

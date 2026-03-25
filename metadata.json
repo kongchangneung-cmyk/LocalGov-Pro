@@ -1,0 +1,7 @@
+{
+  "name": "Local Gov Construction Dashboard",
+  "description": "ระบบติดตามความคืบหน้าโครงการก่อสร้างของหน่วยงานส่วนท้องถิ่น เชื่อมต่อข้อมูลจาก Google Sheets",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

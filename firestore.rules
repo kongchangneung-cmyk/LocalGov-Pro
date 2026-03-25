@@ -1,0 +1,148 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (Firebase Auth UID)
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - name: string (optional)
+    //   - role: string (required, 'admin' or 'viewer')
+    //
+    // Collection: projects
+    // Document ID: {projectId} (Project ID from Google Sheets)
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required)
+    //   - type: string (optional)
+    //   - budget: number (optional)
+    //   - status: string (required)
+    //   - progress: number (required, 0-100)
+    //   - lat: number (optional)
+    //   - lng: number (optional)
+    //   - updatedAt: string (optional, date-time)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) ? get(path).data : null;
+    }
+
+    function hasRole(role) {
+      let data = getUserData();
+      return data != null && data.role == role;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        hasRole('admin') || 
+        (request.auth.token.email == "samapon047@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isDirector() {
+      return isAuthenticated() && (hasRole('director') || isAdmin());
+    }
+
+    function isEngineer() {
+      return isAuthenticated() && (hasRole('engineer') || isAdmin());
+    }
+
+    function isStaff() {
+      return isAuthenticated() && (hasRole('staff') || isAdmin());
+    }
+
+    function isViewer() {
+      let data = getUserData();
+      return isAuthenticated() && (
+        isAdmin() ||
+        (data != null && data.role in ['viewer', 'staff', 'engineer', 'director'])
+      );
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.role in ['admin', 'director', 'engineer', 'staff', 'viewer'];
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['id', 'name', 'status', 'progress']) &&
+             data.id is string &&
+             data.name is string &&
+             data.status is string &&
+             data.progress is int && data.progress >= 0 && data.progress <= 100;
+    }
+
+    function isValidBudgetImport(data) {
+      return data.keys().hasAll(['fiscalYear', 'projectName', 'budget']) &&
+             data.fiscalYear is int &&
+             data.projectName is string &&
+             data.budget is number;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isDirector();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == 'viewer') || 
+        isAdmin()
+      );
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == resource.data.role) || 
+        isAdmin()
+      );
+    }
+
+    match /projects/{projectId} {
+      allow read: if isViewer();
+      allow write: if isStaff() || isEngineer();
+    }
+
+    match /progress_reports/{reportId} {
+      allow read: if isViewer();
+      allow write: if isEngineer() || isStaff();
+    }
+
+    match /inspections/{inspectionId} {
+      allow read: if isViewer();
+      allow write: if isEngineer();
+    }
+
+    match /disbursements/{disbursementId} {
+      allow read: if isViewer();
+      allow write: if isStaff();
+    }
+
+    match /documents/{documentId} {
+      allow read: if isViewer();
+      allow write: if isStaff() || isEngineer();
+    }
+
+    match /budget_imports/{importId} {
+      allow read: if isViewer();
+      allow write: if isAdmin();
+    }
+  }
+}
