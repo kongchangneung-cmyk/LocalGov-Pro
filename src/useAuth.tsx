@@ -6,6 +6,7 @@ export interface UserProfile {
   email: string;
   name: string;
   role: 'admin' | 'director' | 'engineer' | 'staff' | 'viewer';
+  status?: 'active' | 'invited' | 'disabled';
   position?: string;
   photoURL?: string;
   createdAt?: string;
@@ -41,8 +42,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const data = userDoc.data() as UserProfile;
           // Auto-upgrade designated admin email if role is not admin
           if (user.email === 'samapon047@gmail.com' && data.role !== 'admin') {
-            await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
+            await updateDoc(doc(db, 'users', user.uid), { role: 'admin', status: 'active' });
             data.role = 'admin';
+            data.status = 'active';
+          } else if (data.status !== 'active') {
+            await updateDoc(doc(db, 'users', user.uid), { status: 'active' });
+            data.status = 'active';
           }
           setProfile(data);
         } else {
@@ -51,6 +56,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             email: user.email || '',
             name: user.displayName || '',
             role: 'viewer',
+            status: 'active',
+            createdAt: new Date().toISOString()
           };
           if (user.email === 'samapon047@gmail.com') {
             newProfile.role = 'admin';

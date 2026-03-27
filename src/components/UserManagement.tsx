@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../useAuth';
-import { db, collection, onSnapshot, query, orderBy, updateDoc, doc } from '../firebase';
+import { db, collection, onSnapshot, query, orderBy, updateDoc, doc, setDoc } from '../firebase';
 import { handleFirestoreError } from '../utils/firestoreErrorHandler';
 import { UserProfile } from '../useAuth';
+import { logAction } from '../services/auditService';
 import { 
   Users, 
   Search, 
@@ -14,15 +15,29 @@ import {
   XCircle,
   UserPlus,
   Filter,
-  ArrowUpDown
+  ArrowUpDown,
+  X,
+  AlertCircle
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { motion, AnimatePresence } from 'motion/react';
 
 const UserManagement: React.FC = () => {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRole, setSelectedRole] = useState('all');
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteData, setInviteData] = useState({ email: '', name: '', role: 'viewer' as UserProfile['role'], position: '' });
+  const [loading, setLoading] = useState(false);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   useEffect(() => {
     if (!user) return;
@@ -41,12 +56,47 @@ const UserManagement: React.FC = () => {
     return () => unsubscribe();
   }, [user]);
 
-  const handleUpdateRole = async (userId: string, newRole: string) => {
+  const handleInviteUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin || !inviteData.email) return;
+    
+    setLoading(true);
+    try {
+      // Create a dummy UID for the invited user based on email hash or just a random string
+      // In a real app, you might use a different collection or a cloud function
+      const invitedUserId = `invited_${inviteData.email.replace(/[^a-zA-Z0-9]/g, '_')}`;
+      
+      const newProfile: UserProfile = {
+        uid: invitedUserId,
+        email: inviteData.email,
+        name: inviteData.name,
+        role: inviteData.role,
+        position: inviteData.position,
+        status: 'invited',
+        createdAt: new Date().toISOString()
+      };
+
+      await setDoc(doc(db, 'users', invitedUserId), newProfile);
+      await logAction(user?.uid || 'unknown', 'INVITE_USER', `Invited ${inviteData.email} as ${inviteData.role}`);
+      
+      setNotification({ type: 'success', message: `ส่งคำเชิญไปยัง ${inviteData.email} สำเร็จ` });
+      setIsInviteModalOpen(false);
+      setInviteData({ email: '', name: '', role: 'viewer', position: '' });
+    } catch (error) {
+      console.error('Error inviting user:', error);
+      setNotification({ type: 'error', message: 'เกิดข้อผิดพลาดในการส่งคำเชิญ' });
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleUpdateRole = async (userId: string, newRole: string, userName: string) => {
+    if (!isAdmin) return;
     try {
       await updateDoc(doc(db, 'users', userId), {
         role: newRole,
         updatedAt: new Date().toISOString()
       });
+      await logAction(user?.uid || 'unknown', 'UPDATE_USER_ROLE', `Updated role for ${userName} to ${newRole}`);
     } catch (error) {
       console.error('Error updating role:', error);
     }
@@ -96,7 +146,10 @@ const UserManagement: React.FC = () => {
             </select>
           </div>
         </div>
-        <button className="flex items-center gap-2 px-6 py-3 bg-neutral-900 text-white rounded-xl font-bold hover:bg-neutral-800 shadow-lg shadow-neutral-900/20 transition-all">
+        <button 
+          onClick={() => setIsInviteModalOpen(true)}
+          className="flex items-center gap-2 px-6 py-3 bg-neutral-900 text-white rounded-xl font-bold hover:bg-neutral-800 shadow-lg shadow-neutral-900/20 transition-all"
+        >
           <UserPlus className="w-5 h-5" />
           เชิญผู้ใช้งาน
         </button>
@@ -138,17 +191,25 @@ const UserManagement: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-8 py-6">
-                    <select 
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border outline-none transition-all ${
+                    {isAdmin ? (
+                      <select 
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border outline-none transition-all ${
+                          roles.find(r => r.value === user.role)?.color || 'bg-neutral-50 text-neutral-600 border-neutral-100'
+                        }`}
+                        value={user.role}
+                        onChange={(e) => handleUpdateRole(user.id!, e.target.value, user.name)}
+                      >
+                        {roles.map(r => (
+                          <option key={r.value} value={r.value}>{r.label}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
                         roles.find(r => r.value === user.role)?.color || 'bg-neutral-50 text-neutral-600 border-neutral-100'
-                      }`}
-                      value={user.role}
-                      onChange={(e) => handleUpdateRole(user.id, e.target.value)}
-                    >
-                      {roles.map(r => (
-                        <option key={r.value} value={r.value}>{r.label}</option>
-                      ))}
-                    </select>
+                      }`}>
+                        {roles.find(r => r.value === user.role)?.label}
+                      </span>
+                    )}
                   </td>
                   <td className="px-8 py-6">
                     <div className="flex items-center gap-2 text-xs font-bold text-neutral-600">
@@ -163,8 +224,14 @@ const UserManagement: React.FC = () => {
                   </td>
                   <td className="px-8 py-6">
                     <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]" />
-                      <span className="text-[10px] font-black text-neutral-900 uppercase tracking-widest">Active</span>
+                      <div className={`w-2 h-2 rounded-full ${
+                        user.status === 'invited' ? 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.4)]' : 
+                        user.status === 'disabled' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]' :
+                        'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]'
+                      }`} />
+                      <span className="text-[10px] font-black text-neutral-900 uppercase tracking-widest">
+                        {user.status || 'Active'}
+                      </span>
                     </div>
                   </td>
                   <td className="px-8 py-6 text-right">
@@ -188,6 +255,109 @@ const UserManagement: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Invite Modal */}
+      <AnimatePresence>
+        {isInviteModalOpen && (
+          <div className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col"
+            >
+              <div className="px-8 py-6 border-b border-neutral-100 flex items-center justify-between bg-neutral-50">
+                <h3 className="text-xl font-black text-neutral-900 tracking-tight">เชิญผู้ใช้งานใหม่</h3>
+                <button onClick={() => setIsInviteModalOpen(false)} className="p-2 hover:bg-neutral-200 rounded-xl transition-all">
+                  <X className="w-5 h-5 text-neutral-500" />
+                </button>
+              </div>
+
+              <form onSubmit={handleInviteUser} className="p-8 space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">อีเมลผู้ใช้งาน</label>
+                  <input 
+                    type="email" 
+                    required
+                    placeholder="example@email.com"
+                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none text-sm font-bold"
+                    value={inviteData.email}
+                    onChange={e => setInviteData({...inviteData, email: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">ชื่อ-นามสกุล</label>
+                  <input 
+                    type="text" 
+                    placeholder="ระบุชื่อผู้ใช้งาน"
+                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none text-sm font-bold"
+                    value={inviteData.name}
+                    onChange={e => setInviteData({...inviteData, name: e.target.value})}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">สิทธิ์การใช้งาน</label>
+                    <select 
+                      className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none text-sm font-bold"
+                      value={inviteData.role}
+                      onChange={e => setInviteData({...inviteData, role: e.target.value as UserProfile['role']})}
+                    >
+                      {roles.map(r => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">ตำแหน่ง</label>
+                    <input 
+                      type="text" 
+                      placeholder="ระบุตำแหน่ง"
+                      className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none text-sm font-bold"
+                      value={inviteData.position}
+                      onChange={e => setInviteData({...inviteData, position: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 flex gap-4">
+                  <button 
+                    type="button"
+                    onClick={() => setIsInviteModalOpen(false)}
+                    className="flex-1 px-6 py-3 bg-neutral-100 text-neutral-900 rounded-xl font-bold hover:bg-neutral-200 transition-all"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={loading}
+                    className="flex-1 px-6 py-3 bg-neutral-900 text-white rounded-xl font-bold hover:bg-neutral-800 shadow-lg shadow-neutral-900/20 transition-all disabled:opacity-50"
+                  >
+                    {loading ? 'กำลังดำเนินการ...' : 'ส่งคำเชิญ'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Notification Toast */}
+      {notification && (
+        <div className="fixed bottom-8 right-8 z-[150] animate-in slide-in-from-right duration-300">
+          <div className={`flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border ${
+            notification.type === 'success' ? 'bg-green-50 border-green-100 text-green-800' : 'bg-red-50 border-red-100 text-red-800'
+          }`}>
+            {notification.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+            <p className="text-sm font-bold">{notification.message}</p>
+            <button onClick={() => setNotification(null)} className="ml-2">
+              <X className="w-4 h-4 opacity-50 hover:opacity-100" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

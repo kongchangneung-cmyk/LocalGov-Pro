@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import { Upload, Image as ImageIcon, Sparkles, Loader2, MessageSquare, Maximize } from 'lucide-react';
+import { db, doc, onSnapshot } from '../firebase';
 
 interface ProjectAIProps {
   projectId: string;
@@ -26,32 +27,46 @@ const ProjectAI: React.FC<ProjectAIProps> = ({ projectId }) => {
   const [chatHistory, setChatHistory] = useState<{role: 'user' | 'model', text: string}[]>([]);
   const [isChatting, setIsChatting] = useState(false);
   const [useDeepThinking, setUseDeepThinking] = useState(false);
+  const [projectData, setProjectData] = useState<any>(null);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    const unsubscribe = onSnapshot(doc(db, 'projects', projectId), (doc) => {
+      if (doc.exists()) {
+        setProjectData(doc.data());
+      }
+    });
+    return () => unsubscribe();
+  }, [projectId]);
+
+  const aiClient = useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }), []);
+
+  const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        alert('ไฟล์มีขนาดใหญ่เกินไป (สูงสุด 5MB)');
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         setSelectedImage(reader.result as string);
       };
       reader.readAsDataURL(file);
     }
-  };
+  }, []);
 
-  const analyzeImage = async () => {
+  const analyzeImage = useCallback(async () => {
     if (!selectedImage) return;
     
     setIsAnalyzing(true);
     setAnalysisResult('');
     
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
       // Extract base64 data
       const base64Data = selectedImage.split(',')[1];
       const mimeType = selectedImage.split(';')[0].split(':')[1];
 
-      const response = await ai.models.generateContent({
+      const response = await aiClient.models.generateContent({
         model: 'gemini-3.1-pro-preview',
         contents: {
           parts: [
@@ -66,6 +81,9 @@ const ProjectAI: React.FC<ProjectAIProps> = ({ projectId }) => {
             },
           ],
         },
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
+        }
       });
       
       setAnalysisResult(response.text || 'No analysis result.');
@@ -75,18 +93,16 @@ const ProjectAI: React.FC<ProjectAIProps> = ({ projectId }) => {
     } finally {
       setIsAnalyzing(false);
     }
-  };
+  }, [selectedImage, aiClient]);
 
-  const generateImage = async () => {
+  const generateImage = useCallback(async () => {
     if (!generatePrompt) return;
     
     setIsGenerating(true);
     setGeneratedImage(null);
     
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      const response = await ai.models.generateContent({
+      const response = await aiClient.models.generateContent({
         model: 'gemini-3.1-flash-image-preview',
         contents: {
           parts: [
@@ -116,24 +132,23 @@ const ProjectAI: React.FC<ProjectAIProps> = ({ projectId }) => {
     } finally {
       setIsGenerating(false);
     }
-  };
+  }, [generatePrompt, aspectRatio, aiClient]);
 
-  const sendChatMessage = async () => {
+  const sendChatMessage = useCallback(async () => {
     if (!chatInput.trim()) return;
     
-    const newUserMessage = { role: 'user' as const, text: chatInput };
+    const currentInput = chatInput;
+    const newUserMessage = { role: 'user' as const, text: currentInput };
     setChatHistory(prev => [...prev, newUserMessage]);
     setChatInput('');
     setIsChatting(true);
     
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      const response = await ai.models.generateContent({
+      const response = await aiClient.models.generateContent({
         model: useDeepThinking ? 'gemini-3.1-pro-preview' : 'gemini-3.1-flash-lite-preview',
-        contents: chatInput,
+        contents: `Project Context: ${JSON.stringify(projectData)}. User Question: ${currentInput}`,
         config: {
-          systemInstruction: 'You are a helpful project management assistant providing quick, concise answers.',
+          systemInstruction: 'You are a helpful project management assistant for this specific project. Use the provided project context to answer questions.',
           ...(useDeepThinking ? { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } } : {})
         }
       });
@@ -145,7 +160,7 @@ const ProjectAI: React.FC<ProjectAIProps> = ({ projectId }) => {
     } finally {
       setIsChatting(false);
     }
-  };
+  }, [chatInput, projectData, useDeepThinking, aiClient]);
 
   return (
     <div className="bg-white p-8 rounded-3xl border border-neutral-200 shadow-sm space-y-8">

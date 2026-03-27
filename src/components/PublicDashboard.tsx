@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db, collection, onSnapshot, query, orderBy, limit } from '../firebase';
 import { Project } from './Dashboard';
 import { 
@@ -70,21 +70,38 @@ const PublicDashboard: React.FC = () => {
     { name: 'อื่นๆ', value: projects.filter(p => !['ถนน', 'รางระบายน้ำ', 'ขยายไหล่ทาง', 'อาคาร'].includes(p.type)).length },
   ].filter(d => d.value > 0);
 
-  const budgetData = [
-    { month: 'ต.ค.', actual: 480000, plan: 500000 },
-    { month: 'พ.ย.', actual: 420000, plan: 450000 },
-    { month: 'ธ.ค.', actual: 580000, plan: 600000 },
-    { month: 'ม.ค.', actual: 450000, plan: 400000 },
-    { month: 'ก.พ.', actual: 530000, plan: 550000 },
-    { month: 'มี.ค.', actual: 650000, plan: 700000 },
-  ];
+  const proportionData = React.useMemo(() => {
+    const groups: { [key: string]: { count: number; budget: number } } = {};
+    
+    projects.forEach(p => {
+      const type = p.type || 'อื่นๆ';
+      if (!groups[type]) {
+        groups[type] = { count: 0, budget: 0 };
+      }
+      groups[type].count += 1;
+      groups[type].budget += p.budget || 0;
+    });
+
+    return Object.entries(groups)
+      .map(([type, data]) => ({
+        type,
+        count: data.count,
+        budget: data.budget
+      }))
+      .sort((a, b) => b.budget - a.budget);
+  }, [projects]);
+
+  const totalProportion = useMemo(() => ({
+    count: proportionData.reduce((acc, d) => acc + d.count, 0),
+    budget: proportionData.reduce((acc, d) => acc + d.budget, 0),
+  }), [proportionData]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('th-TH', {
       style: 'currency',
       currency: 'THB',
       minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 0,
     }).format(amount);
   };
 
@@ -268,38 +285,40 @@ const PublicDashboard: React.FC = () => {
 
         {/* Charts Section */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Budget vs Actual */}
-          <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-neutral-200 shadow-sm">
+          {/* Project Proportion by Budget */}
+          <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-neutral-200 shadow-sm overflow-hidden">
             <div className="flex items-center justify-between mb-8">
               <div>
-                <h3 className="text-xl font-black text-neutral-900">สรุปงบประมาณรายเดือน (Budget vs Actual)</h3>
+                <h3 className="text-xl font-black text-neutral-900">สัดส่วนโครงการตามงบประมาณ</h3>
                 <p className="text-sm text-neutral-500 font-medium">ข้อมูลปีงบประมาณ 2569 (ต.ค. 68 - ก.ย. 69)</p>
               </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-orange-500 rounded-full" />
-                  <span className="text-[10px] font-bold text-neutral-500 uppercase">เบิกจ่ายจริง</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-neutral-200 rounded-full" />
-                  <span className="text-[10px] font-bold text-neutral-500 uppercase">งบประมาณแผน</span>
-                </div>
-              </div>
             </div>
-            <div className="h-[350px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={budgetData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 700, fill: '#94a3b8'}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 700, fill: '#94a3b8'}} />
-                  <Tooltip 
-                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                    cursor={{fill: '#f8fafc'}}
-                  />
-                  <Bar dataKey="actual" fill="#f97316" radius={[6, 6, 0, 0]} barSize={24} />
-                  <Bar dataKey="plan" fill="#e2e8f0" radius={[6, 6, 0, 0]} barSize={24} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-neutral-50">
+                  <tr>
+                    <th className="px-6 py-4 text-[10px] font-black text-neutral-400 uppercase tracking-widest">ประเภทโครงการ</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-center">จำนวน (โครงการ)</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-neutral-400 uppercase tracking-widest text-right">งบประมาณ (บาท)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {proportionData.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-neutral-50 transition-all">
+                      <td className="px-6 py-4 text-sm font-bold text-neutral-700">{item.type}</td>
+                      <td className="px-6 py-4 text-sm font-black text-neutral-900 text-center">{item.count}</td>
+                      <td className="px-6 py-4 text-sm font-black text-neutral-900 text-right">{formatCurrency(item.budget)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-neutral-900 text-white">
+                  <tr>
+                    <td className="px-6 py-4 text-sm font-black uppercase tracking-widest">รวมทั้งสิ้น</td>
+                    <td className="px-6 py-4 text-sm font-black text-center">{totalProportion.count}</td>
+                    <td className="px-6 py-4 text-sm font-black text-right">{formatCurrency(totalProportion.budget)}</td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           </div>
 

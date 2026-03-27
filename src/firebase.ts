@@ -1,31 +1,40 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
-import { getFirestore, doc, getDoc, getDocs, setDoc, onSnapshot, collection, query, orderBy, addDoc, updateDoc, deleteDoc, serverTimestamp, where, writeBatch, limit } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
+export const storage = getStorage(app);
 
-export { 
-  signInWithPopup, 
-  onAuthStateChanged, 
-  signOut, 
-  doc, 
-  getDoc, 
+// Export Firestore functions for convenience
+export {
+  collection,
+  doc,
   getDocs,
-  setDoc, 
-  onSnapshot, 
-  collection, 
-  query, 
-  orderBy,
+  getDoc,
+  setDoc,
   addDoc,
   updateDoc,
   deleteDoc,
-  serverTimestamp,
+  query,
   where,
+  orderBy,
+  onSnapshot,
+  serverTimestamp,
   writeBatch,
   limit
-};
-export type { FirebaseUser };
+} from 'firebase/firestore';
+
+export {
+  onAuthStateChanged,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+  type User as FirebaseUser
+} from 'firebase/auth';
+
+import { GoogleAuthProvider } from 'firebase/auth';
+export const googleProvider = new GoogleAuthProvider();

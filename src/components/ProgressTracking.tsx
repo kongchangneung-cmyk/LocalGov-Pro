@@ -41,6 +41,8 @@ const ProgressTracking: React.FC = () => {
     photos: [] as string[],
   });
 
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
@@ -128,6 +130,15 @@ const ProgressTracking: React.FC = () => {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      {/* Full-size Image Modal */}
+      {selectedPhoto && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4" onClick={() => setSelectedPhoto(null)}>
+          <img src={selectedPhoto} alt="Full size" className="max-w-full max-h-full object-contain rounded-lg" referrerPolicy="no-referrer" />
+          <button className="absolute top-4 right-4 text-white p-2" onClick={() => setSelectedPhoto(null)}>
+            <X className="w-8 h-8" />
+          </button>
+        </div>
+      )}
       {/* Project List */}
       <div className="lg:col-span-1 space-y-4">
         <h3 className="text-lg font-bold text-neutral-900 mb-4">เลือกโครงการ</h3>
@@ -224,7 +235,11 @@ const ProgressTracking: React.FC = () => {
                       {report.photos && report.photos.length > 0 && (
                         <div className="flex flex-wrap gap-3">
                           {report.photos.map((photo, pIdx) => (
-                            <div key={pIdx} className="w-24 h-24 rounded-xl overflow-hidden border border-neutral-200 shadow-sm">
+                            <div 
+                              key={pIdx} 
+                              className="w-20 h-20 rounded-xl overflow-hidden border border-neutral-200 shadow-sm cursor-pointer hover:opacity-80 transition-opacity"
+                              onClick={() => setSelectedPhoto(photo)}
+                            >
                               <img 
                                 src={photo} 
                                 alt={`Progress ${pIdx + 1}`} 
@@ -315,18 +330,18 @@ const ProgressTracking: React.FC = () => {
                 <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest">รูปภาพหน้างาน</label>
                 <div className="flex flex-wrap gap-3">
                   {formData.photos.map((photo, index) => (
-                    <div key={index} className="relative w-20 h-20 rounded-xl overflow-hidden border border-neutral-200 group">
+                    <div key={index} className="relative w-16 h-16 rounded-xl overflow-hidden border border-neutral-200 group cursor-pointer" onClick={() => setSelectedPhoto(photo)}>
                       <img src={photo} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       <button 
                         type="button"
-                        onClick={() => removePhoto(index)}
+                        onClick={(e) => { e.stopPropagation(); removePhoto(index); }}
                         className="absolute inset-0 bg-red-500/80 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
                       >
                         <X className="w-5 h-5" />
                       </button>
                     </div>
                   ))}
-                  <label className="w-20 h-20 bg-neutral-50 border-2 border-dashed border-neutral-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-neutral-100 hover:border-neutral-300 transition-all">
+                  <label className="w-16 h-16 bg-neutral-50 border-2 border-dashed border-neutral-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-neutral-100 hover:border-neutral-300 transition-all">
                     <Plus className="w-6 h-6 text-neutral-400" />
                     <span className="text-[10px] font-bold text-neutral-400 mt-1">เพิ่มรูป</span>
                     <input 

@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { Skeleton } from './ui/Skeleton';
 import { db, collection, onSnapshot, query, orderBy, writeBatch, doc } from '../firebase';
 import { handleFirestoreError } from '../utils/firestoreErrorHandler';
 import { useAuth } from '../useAuth';
@@ -17,6 +18,8 @@ import {
   Database
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { motion } from 'motion/react';
+import { constructionDataInterceptor } from '../utils/dataInterceptor';
 import { 
   XAxis, 
   YAxis, 
@@ -48,9 +51,12 @@ export interface Project {
   endDate?: string;
   responsiblePerson?: string;
   description?: string;
+  locationName?: string;
+  contractorPhone?: string;
   villageName?: string;
   villageNo?: number;
   contractNo?: string;
+  googleMapsLink?: string;
   inspectionCommittee?: string[];
   supervisor?: string;
   installments?: {
@@ -64,6 +70,12 @@ export interface Project {
     size: string;
     date: string;
     type?: string;
+  }[];
+  images?: {
+    url: string;
+    name: string;
+    uploadedAt: string;
+    uploadedBy: string;
   }[];
 }
 
@@ -95,6 +107,22 @@ const Dashboard: React.FC = () => {
       }
     });
 
+    // One-time update for P001 locationName
+    const updateP001 = async () => {
+      try {
+        const { getDoc, updateDoc } = await import('firebase/firestore');
+        const p001Ref = doc(db, 'projects', 'P001');
+        const p001Snap = await getDoc(p001Ref);
+        if (p001Snap.exists() && p001Snap.data().locationName !== 'City Hall Square') {
+          await updateDoc(p001Ref, { locationName: 'City Hall Square' });
+          console.log('Updated P001 locationName to City Hall Square');
+        }
+      } catch (error) {
+        console.error('Error updating P001:', error);
+      }
+    };
+    updateP001();
+
     const q = query(collection(db, 'projects'), orderBy('updatedAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data: Project[] = [];
@@ -114,11 +142,11 @@ const Dashboard: React.FC = () => {
     };
   }, [user]);
 
-  const handleMarkerClick = (projectId: string) => {
+  const handleMarkerClick = useCallback((projectId: string) => {
     setHighlightedProjectId(projectId);
     // Clear highlight after 3 seconds
     setTimeout(() => setHighlightedProjectId(null), 3000);
-  };
+  }, []);
 
   const handleSyncGoogleSheet = async (customSheetId?: string) => {
     const sheetId = customSheetId || prompt('กรุณาใส่ Google Sheet ID (ต้องเปิดเป็นสาธารณะ/Public):', syncSettings.sheetId);
@@ -161,29 +189,48 @@ const Dashboard: React.FC = () => {
       let count = 0;
       for (let i = 1; i < rows.length; i++) {
         const values = rows[i];
-        if (values.length < headers.length || !values[0]) continue;
+        if (values.length < 2 || !values[0]) continue; // At least ID and Name
         
-        const projectData: any = {};
-        headers.forEach((header, index) => {
-          projectData[header] = values[index];
-        });
+        const rawData = constructionDataInterceptor(values);
+        const existingId = rawData.projectId;
+        const projectName = rawData.projectName;
 
         const mappedProject = {
-          name: projectData.name || projectData['ชื่อโครงการ'] || 'Untitled',
-          type: projectData.type || projectData['ประเภท'] || 'ถนน',
-          budget: Number(projectData.budget || projectData['งบประมาณ'] || 0),
-          status: projectData.status || projectData['สถานะ'] || 'In Progress',
-          progress: Number(projectData.progress || projectData['ความก้าวหน้า'] || 0),
-          lat: Number(projectData.lat || 16.05),
-          lng: Number(projectData.lng || 103.65),
+          id: rawData.projectId,
+          name: rawData.projectName,
+          type: rawData.category,
+          fundingSource: rawData.fundingSource,
+          villageNo: rawData.village,
+          villageName: rawData.subDistrict,
+          budget: rawData.budget,
+          fiscalYear: rawData.fiscalYear.toString(),
+          lat: rawData.location.lat || 16.0545,
+          lng: rawData.location.lng || 103.6521,
+          googleMapsLink: rawData.location.googleMapsLink || "",
           updatedAt: new Date().toISOString(),
-          contractor: projectData.contractor || projectData['ผู้รับเหมา'] || '',
-          responsiblePerson: projectData.responsiblePerson || projectData['ผู้รับผิดชอบ'] || '',
-          fiscalYear: projectData.fiscalYear || '2569'
+          status: "In Progress",
+          progress: 0
         };
 
-        const docRef = doc(collection(db, 'projects'));
-        batch.set(docRef, { ...mappedProject, id: `PROJ-${docRef.id.substr(0, 5).toUpperCase()}` });
+        // If we have an ID, we use it as the document ID to update/set
+        // Otherwise, we try to find by name or create new
+        let docRef;
+        if (existingId && existingId !== "N/A") {
+          docRef = doc(db, 'projects', existingId);
+        } else {
+          // If no ID, we check if a project with the same name exists to avoid duplication
+          const existingProject = projects.find(p => p.name === projectName);
+          if (existingProject) {
+            docRef = doc(db, 'projects', existingProject.id);
+          } else {
+            docRef = doc(collection(db, 'projects'));
+          }
+        }
+
+        batch.set(docRef, { 
+          ...mappedProject, 
+          id: (existingId && existingId !== "N/A") ? existingId : (docRef.id.startsWith('PROJ-') ? docRef.id : `PROJ-${docRef.id.substr(0, 5).toUpperCase()}`)
+        }, { merge: true });
         count++;
       }
       
@@ -205,12 +252,36 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const avgProgress = projects.length > 0 
-    ? projects.reduce((sum, p) => sum + p.progress, 0) / projects.length 
-    : 0;
+  const statusData = useMemo(() => [
+    { name: 'เสร็จสิ้น', value: projects.filter(p => p.status === 'Completed').length, color: '#10b981' },
+    { name: 'กำลังดำเนินการ', value: projects.filter(p => p.status === 'In Progress').length, color: '#3b82f6' },
+    { name: 'ล่าช้า', value: projects.filter(p => p.status === 'Delayed').length, color: '#ef4444' },
+  ], [projects]);
+
+  const typeData = useMemo(() => {
+    const typeCounts: Record<string, { count: number, budget: number }> = {};
+    projects.forEach(p => {
+      const type = p.type || 'อื่นๆ';
+      if (!typeCounts[type]) {
+        typeCounts[type] = { count: 0, budget: 0 };
+      }
+      typeCounts[type].count += 1;
+      typeCounts[type].budget += p.budget;
+    });
+
+    const colors = ['#f97316', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+    return Object.entries(typeCounts)
+      .map(([name, data], index) => ({
+        name,
+        value: data.count,
+        budget: data.budget,
+        color: colors[index % colors.length]
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [projects]);
 
   // Real chart data derived from projects
-  const chartData = React.useMemo(() => {
+  const chartData = useMemo(() => {
     const months = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
     const currentMonth = new Date().getMonth();
     const last6Months = [];
@@ -236,29 +307,34 @@ const Dashboard: React.FC = () => {
     return last6Months;
   }, [projects]);
 
-  const statusData = [
-    { name: 'Completed', value: projects.filter(p => p.status === 'Completed').length, color: '#10b981' },
-    { name: 'In Progress', value: projects.filter(p => p.status === 'In Progress').length, color: '#3b82f6' },
-    { name: 'Delayed', value: projects.filter(p => p.status === 'Delayed').length, color: '#ef4444' },
-  ];
+  const stats = useMemo(() => {
+    const totalBudget = projects.reduce((sum, p) => sum + p.budget, 0);
+    const avgProgress = projects.length > 0 
+      ? projects.reduce((sum, p) => sum + p.progress, 0) / projects.length 
+      : 0;
+    const completedCount = projects.filter(p => p.status === 'Completed').length;
+    const activeCount = projects.filter(p => p.status === 'In Progress').length;
+    
+    return {
+      totalProjects: projects.length,
+      totalBudget,
+      avgProgress,
+      completedCount,
+      activeCount
+    };
+  }, [projects]);
 
-  const stats = {
-    totalProjects: projects.length,
-    totalBudget: projects.reduce((sum, p) => sum + p.budget, 0),
-    avgProgress: avgProgress
-  };
-
-  const uniqueFiscalYears = React.useMemo(() => {
+  const uniqueFiscalYears = useMemo(() => {
     const years = projects.map(p => p.fiscalYear).filter((y): y is string => !!y);
     return Array.from(new Set(years)).sort((a, b) => b.localeCompare(a));
   }, [projects]);
 
-  const uniqueProjectTypes = React.useMemo(() => {
+  const uniqueProjectTypes = useMemo(() => {
     const types = projects.map(p => p.type).filter((t): t is string => !!t);
     return Array.from(new Set(types)).sort((a, b) => a.localeCompare(b));
   }, [projects]);
 
-  const filteredAndSortedProjects = React.useMemo(() => {
+  const filteredAndSortedProjects = useMemo(() => {
     let filtered = [...projects];
     
     if (fiscalYearFilter !== 'All') {
@@ -281,12 +357,34 @@ const Dashboard: React.FC = () => {
       }
       return 0;
     });
-  }, [projects, sortBy, fiscalYearFilter]);
+  }, [projects, sortBy, fiscalYearFilter, projectTypeFilter]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-neutral-900"></div>
+      <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-64" />
+            <Skeleton className="h-4 w-48" />
+          </div>
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-10 w-32" />
+            <Skeleton className="h-10 w-48" />
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map(i => (
+            <Skeleton key={i} className="h-32 rounded-[2rem]" />
+          ))}
+        </div>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <Skeleton className="lg:col-span-2 h-[400px] rounded-[2rem]" />
+          <Skeleton className="h-[400px] rounded-[2rem]" />
+        </div>
+        
+        <Skeleton className="h-[500px] rounded-[2.5rem]" />
       </div>
     );
   }
@@ -296,7 +394,7 @@ const Dashboard: React.FC = () => {
       {/* Welcome Section */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h1 className="text-4xl font-black text-neutral-900 tracking-tight mb-2">
+          <h1 className="text-3xl font-black text-neutral-900 tracking-tight mb-2">
             {activeTab === 'overview' ? 'ภาพรวมแดชบอร์ด' : 
              activeTab === 'projects' ? 'รายการโครงการทั้งหมด' : 'ระบบจัดการข้อมูลอัตโนมัติ'}
           </h1>
@@ -306,6 +404,15 @@ const Dashboard: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {isAdmin && activeTab === 'overview' && (
+            <button 
+              onClick={() => handleSyncGoogleSheet()}
+              className="flex items-center gap-2 px-4 py-2 bg-neutral-900 text-white rounded-xl text-sm font-bold hover:bg-neutral-800 transition-all shadow-lg shadow-neutral-900/20"
+            >
+              <Database className="w-4 h-4" />
+              ซิงค์ข้อมูล
+            </button>
+          )}
           <div className="bg-white p-1 rounded-xl border border-neutral-200 flex">
             <button 
               onClick={() => setActiveTab('overview')}
@@ -334,83 +441,83 @@ const Dashboard: React.FC = () => {
       {activeTab === 'overview' && (
         <>
           {/* Stats Bento Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Stat 1 */}
-            <div className="bg-slate-900 p-8 rounded-[2.5rem] text-white shadow-2xl shadow-slate-900/20 relative overflow-hidden group">
+            <div className="bg-slate-900 p-6 rounded-[2rem] text-white shadow-2xl shadow-slate-900/20 relative overflow-hidden group">
               <div className="absolute -right-4 -top-4 w-32 h-32 bg-orange-500/10 rounded-full blur-2xl group-hover:bg-orange-500/20 transition-all duration-500" />
               <div className="relative z-10 flex flex-col h-full justify-between">
-                <div className="flex items-center justify-between mb-8">
-                  <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-md">
-                    <Box className="w-6 h-6 text-orange-400" />
+                <div className="flex items-center justify-between mb-6">
+                  <div className="w-10 h-10 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-md">
+                    <Box className="w-5 h-5 text-orange-400" />
                   </div>
-                  <div className="flex items-center gap-1 text-orange-400 text-xs font-black uppercase tracking-widest">
-                    <ArrowUpRight className="w-4 h-4" />
+                  <div className="flex items-center gap-1 text-orange-400 text-[10px] font-black uppercase tracking-widest">
+                    <ArrowUpRight className="w-3.5 h-3.5" />
                     +12%
                   </div>
                 </div>
                 <div>
-                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">โครงการทั้งหมด</p>
-                  <h2 className="text-5xl font-black tracking-tighter">
+                  <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">โครงการทั้งหมด</p>
+                  <h2 className="text-4xl font-black tracking-tighter">
                     {projects.length}
-                    <span className="text-orange-500 text-2xl ml-1">.</span>
+                    <span className="text-orange-500 text-xl ml-1">.</span>
                   </h2>
                 </div>
               </div>
             </div>
 
             {/* Stat 2 */}
-            <div className="bg-white p-8 rounded-[2.5rem] border border-neutral-200 shadow-sm hover:shadow-xl transition-all duration-500 group relative overflow-hidden">
+            <div className="bg-white p-6 rounded-[2rem] border border-neutral-200 shadow-sm hover:shadow-xl transition-all duration-500 group relative overflow-hidden">
               <div className="absolute -right-4 -top-4 w-32 h-32 bg-orange-50 rounded-full blur-2xl opacity-0 group-hover:opacity-100 transition-all duration-500" />
               <div className="flex flex-col h-full justify-between relative z-10">
-                <div className="flex items-center justify-between mb-8">
-                  <div className="w-12 h-12 bg-neutral-50 rounded-2xl flex items-center justify-center border border-neutral-100 group-hover:bg-orange-500 group-hover:text-white transition-all duration-500">
-                    <DollarSign className="w-6 h-6" />
+                <div className="flex items-center justify-between mb-6">
+                  <div className="w-10 h-10 bg-neutral-50 rounded-2xl flex items-center justify-center border border-neutral-100 group-hover:bg-orange-500 group-hover:text-white transition-all duration-500">
+                    <DollarSign className="w-5 h-5" />
                   </div>
-                  <div className="flex items-center gap-1 text-green-500 text-xs font-black uppercase tracking-widest">
-                    <ArrowUpRight className="w-4 h-4" />
+                  <div className="flex items-center gap-1 text-green-500 text-[10px] font-black uppercase tracking-widest">
+                    <ArrowUpRight className="w-3.5 h-3.5" />
                     +5.4%
                   </div>
                 </div>
                 <div>
-                  <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest mb-1">งบประมาณรวม</p>
-                  <h2 className="text-4xl font-black tracking-tighter text-neutral-900">฿{(stats.totalBudget / 1000000).toFixed(1)}M</h2>
+                  <p className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest mb-1">งบประมาณรวม</p>
+                  <h2 className="text-3xl font-black tracking-tighter text-neutral-900">฿{(stats.totalBudget / 1000000).toFixed(1)}M</h2>
                 </div>
               </div>
             </div>
 
             {/* Stat 3 */}
-            <div className="bg-white p-8 rounded-[2.5rem] border border-neutral-200 shadow-sm hover:shadow-xl transition-all duration-500 group">
+            <div className="bg-white p-6 rounded-[2rem] border border-neutral-200 shadow-sm hover:shadow-xl transition-all duration-500 group">
               <div className="flex flex-col h-full justify-between">
-                <div className="flex items-center justify-between mb-8">
-                  <div className="w-12 h-12 bg-green-50 rounded-2xl flex items-center justify-center border border-green-100 group-hover:bg-green-600 group-hover:text-white transition-all duration-500">
-                    <CheckCircle2 className="w-6 h-6 text-green-600 group-hover:text-white" />
+                <div className="flex items-center justify-between mb-6">
+                  <div className="w-10 h-10 bg-green-50 rounded-2xl flex items-center justify-center border border-green-100 group-hover:bg-green-600 group-hover:text-white transition-all duration-500">
+                    <CheckCircle2 className="w-5 h-5 text-green-600 group-hover:text-white" />
                   </div>
-                  <div className="flex items-center gap-1 text-neutral-400 text-xs font-black uppercase tracking-widest">
+                  <div className="flex items-center gap-1 text-neutral-400 text-[10px] font-black uppercase tracking-widest">
                     คงที่
                   </div>
                 </div>
                 <div>
-                  <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest mb-1">เสร็จสิ้นแล้ว</p>
-                  <h2 className="text-4xl font-black tracking-tighter text-neutral-900">{projects.filter(p => p.status === 'Completed').length}</h2>
+                  <p className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest mb-1">เสร็จสิ้นแล้ว</p>
+                  <h2 className="text-3xl font-black tracking-tighter text-neutral-900">{stats.completedCount}</h2>
                 </div>
               </div>
             </div>
 
             {/* Stat 4 */}
-            <div className="bg-white p-8 rounded-[2.5rem] border border-neutral-200 shadow-sm hover:shadow-xl transition-all duration-500 group">
+            <div className="bg-white p-6 rounded-[2rem] border border-neutral-200 shadow-sm hover:shadow-xl transition-all duration-500 group">
               <div className="flex flex-col h-full justify-between">
-                <div className="flex items-center justify-between mb-8">
-                  <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center border border-blue-100 group-hover:bg-blue-600 group-hover:text-white transition-all duration-500">
-                    <Activity className="w-6 h-6 text-blue-600 group-hover:text-white" />
+                <div className="flex items-center justify-between mb-6">
+                  <div className="w-10 h-10 bg-blue-50 rounded-2xl flex items-center justify-center border border-blue-100 group-hover:bg-blue-600 group-hover:text-white transition-all duration-500">
+                    <Activity className="w-5 h-5 text-blue-600 group-hover:text-white" />
                   </div>
-                  <div className="flex items-center gap-1 text-blue-500 text-xs font-black uppercase tracking-widest">
-                    <TrendingUp className="w-4 h-4" />
-                    {avgProgress.toFixed(0)}%
+                  <div className="flex items-center gap-1 text-blue-500 text-[10px] font-black uppercase tracking-widest">
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    {stats.avgProgress.toFixed(0)}%
                   </div>
                 </div>
                 <div>
-                  <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest mb-1">ความก้าวหน้าเฉลี่ย</p>
-                  <h2 className="text-4xl font-black tracking-tighter text-neutral-900">{avgProgress.toFixed(1)}%</h2>
+                  <p className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest mb-1">ความก้าวหน้าเฉลี่ย</p>
+                  <h2 className="text-3xl font-black tracking-tighter text-neutral-900">{stats.avgProgress.toFixed(1)}%</h2>
                 </div>
               </div>
             </div>
@@ -419,11 +526,11 @@ const Dashboard: React.FC = () => {
           {/* Charts & Map Bento Section */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Main Chart */}
-            <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-neutral-200 shadow-sm">
-              <div className="flex items-center justify-between mb-8">
+            <div className="lg:col-span-2 bg-white p-6 rounded-[2rem] border border-neutral-200 shadow-sm">
+              <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h3 className="text-xl font-black text-neutral-900 tracking-tight">แนวโน้มการเบิกจ่าย</h3>
-                  <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">ข้อมูลย้อนหลัง 6 เดือน</p>
+                  <h3 className="text-lg font-black text-neutral-900 tracking-tight">แนวโน้มการเบิกจ่าย</h3>
+                  <p className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest">ข้อมูลย้อนหลัง 6 เดือน</p>
                 </div>
               </div>
               <div className="h-[300px] w-full">
@@ -468,9 +575,9 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Status Breakdown */}
-            <div className="bg-white p-8 rounded-[2.5rem] border border-neutral-200 shadow-sm flex flex-col">
-              <h3 className="text-xl font-black text-neutral-900 tracking-tight mb-2">สถานะโครงการ</h3>
-              <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest mb-8">แบ่งตามความคืบหน้า</p>
+            <div className="bg-white p-6 rounded-[2rem] border border-neutral-200 shadow-sm flex flex-col">
+              <h3 className="text-lg font-black text-neutral-900 tracking-tight mb-1">สถานะโครงการ</h3>
+              <p className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest mb-6">แบ่งตามความคืบหน้า</p>
               
               <div className="flex-1 flex items-center justify-center relative">
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -514,20 +621,56 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Map Section */}
-          <div className="bg-white p-4 rounded-[2.5rem] border border-neutral-200 shadow-sm h-[500px] relative overflow-hidden">
-            <div className="absolute top-8 left-8 z-10 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-neutral-200 shadow-xl">
-              <div className="flex items-center gap-3 mb-1">
-                <MapIcon className="w-5 h-5 text-neutral-900" />
-                <h3 className="text-sm font-black text-neutral-900 tracking-tight">พิกัดโครงการ</h3>
+          {/* Type Breakdown & Map Section */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Type Breakdown */}
+            <div className="bg-white p-6 rounded-[2rem] border border-neutral-200 shadow-sm flex flex-col">
+              <h3 className="text-lg font-black text-neutral-900 tracking-tight mb-1">สัดส่วนประเภทงาน</h3>
+              <p className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest mb-6">แบ่งตามจำนวนโครงการ</p>
+              
+              <div className="flex-1 space-y-4">
+                {typeData.slice(0, 5).map((item, idx) => (
+                  <div key={idx} className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest">
+                      <span className="text-neutral-500 truncate max-w-[200px]">{item.name}</span>
+                      <span className="text-neutral-900">{item.value} โครงการ</span>
+                    </div>
+                    <div className="h-2 bg-neutral-100 rounded-full overflow-hidden">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${(item.value / projects.length) * 100}%` }}
+                        className="h-full rounded-full"
+                        style={{ backgroundColor: item.color }}
+                      />
+                    </div>
+                    <div className="text-[9px] text-neutral-400 font-bold">
+                      งบประมาณ: ฿{(item.budget / 1000000).toFixed(2)}M
+                    </div>
+                  </div>
+                ))}
+                {typeData.length > 5 && (
+                  <p className="text-[10px] text-center text-neutral-400 font-bold uppercase tracking-widest pt-2">
+                    และอื่นๆ อีก {typeData.length - 5} ประเภท
+                  </p>
+                )}
               </div>
-              <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-widest">แสดงตำแหน่งโครงการทั้งหมด</p>
             </div>
-            <ProjectMap 
-              projects={projects} 
-              onMarkerClick={handleMarkerClick} 
-              onSync={isAdmin ? handleSyncGoogleSheet : undefined}
-            />
+
+            {/* Map Section */}
+            <div className="lg:col-span-2 bg-white p-4 rounded-[2.5rem] border border-neutral-200 shadow-sm h-[500px] relative overflow-hidden">
+              <div className="absolute top-8 left-8 z-10 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-neutral-200 shadow-xl">
+                <div className="flex items-center gap-3 mb-1">
+                  <MapIcon className="w-5 h-5 text-neutral-900" />
+                  <h3 className="text-sm font-black text-neutral-900 tracking-tight">พิกัดโครงการ</h3>
+                </div>
+                <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-widest">แสดงตำแหน่งโครงการทั้งหมด</p>
+              </div>
+              <ProjectMap 
+                projects={projects} 
+                onMarkerClick={handleMarkerClick} 
+                onSync={isAdmin ? handleSyncGoogleSheet : undefined}
+              />
+            </div>
           </div>
         </>
       )}

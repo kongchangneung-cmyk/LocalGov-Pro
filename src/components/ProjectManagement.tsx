@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useDebounce } from '../hooks/useDebounce';
+import { Skeleton } from './ui/Skeleton';
+import * as XLSX from 'xlsx';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../useAuth';
 import { db, collection, onSnapshot, query, orderBy, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch } from '../firebase';
@@ -25,7 +28,9 @@ import {
   Square,
   ChevronDown,
   LayoutGrid,
-  List
+  List,
+  Download,
+  FileText
 } from 'lucide-react';
 import { format } from 'date-fns';
 import ProjectCard from './ProjectCard';
@@ -41,6 +46,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
   const { user, isAdmin } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,9 +54,34 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
   const [viewMode, setViewMode] = useState<'table' | 'grid' | 'map'>('grid');
   const [budgetError, setBudgetError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('All');
+  const [showImportConfirm, setShowImportConfirm] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [importData, setImportData] = useState<any[]>([]);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form State
-  const [formData, setFormData] = useState({
+  interface FormData {
+    name: string;
+    type: string;
+    fiscalYear: string;
+    budget: number;
+    contractor: string;
+    startDate: string;
+    endDate: string;
+    status: string;
+    progress: number;
+    lat: number;
+    lng: number;
+    responsiblePerson: string;
+    description: string;
+    locationName: string;
+    contractorPhone: string;
+  }
+
+  const [formData, setFormData] = useState<FormData>({
     name: '',
     type: typeFilter || 'ถนน',
     fiscalYear: '2569',
@@ -62,8 +93,18 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
     progress: 0,
     lat: 16.05,
     lng: 103.65,
-    responsiblePerson: ''
+    responsiblePerson: '',
+    description: '',
+    locationName: '',
+    contractorPhone: ''
   });
+
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   useEffect(() => {
     if (!user) return;
@@ -80,6 +121,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
         }
       });
       setProjects(projectsData);
+      setLastUpdated(new Date());
       setLoading(false);
     }, (error) => {
       handleFirestoreError(error, 'Error loading projects');
@@ -136,12 +178,120 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
     }
   };
 
+  const handleExportCSV = () => {
+    const headers = ['ID', 'Project Name', 'Type', 'Budget', 'Status', 'Progress (%)', 'Contractor', 'Responsible Person', 'Start Date', 'End Date', 'Fiscal Year'];
+    const rows = filteredProjects.map(p => [
+      p.id,
+      p.name,
+      p.type,
+      p.budget,
+      p.status,
+      p.progress,
+      p.contractor || '',
+      p.responsiblePerson || '',
+      p.startDate || '',
+      p.endDate || '',
+      p.fiscalYear || ''
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `projects_export_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportXLSX = () => {
+    const dataToExport = filteredProjects.map(p => ({
+      'ID': p.id,
+      'ชื่อโครงการ': p.name,
+      'ประเภท': p.type,
+      'งบประมาณ': p.budget,
+      'สถานะ': p.status,
+      'ความก้าวหน้า (%)': p.progress,
+      'ผู้รับผิดชอบ': p.responsiblePerson || '',
+      'ผู้รับเหมา': p.contractor || '',
+      'วันที่เริ่ม': p.startDate || '',
+      'วันที่สิ้นสุด': p.endDate || '',
+      'ปีงบประมาณ': p.fiscalYear || ''
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Projects");
+    XLSX.writeFile(wb, `projects_export_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+  };
+
+  const handleExportPDF = async () => {
+    const { jsPDF } = await import('jspdf');
+    const autoTable = (await import('jspdf-autotable')).default;
+    
+    const doc = new jsPDF();
+    
+    // Note: Default jsPDF fonts don't support Thai. 
+    // For a real app, we would load a Thai font here.
+    // For now, we'll use English labels but include the data.
+    
+    doc.text("Project Export Report", 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Generated on: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 14, 22);
+
+    const tableData = filteredProjects.map(p => [
+      p.id,
+      p.name,
+      p.type,
+      formatCurrency(p.budget),
+      p.status,
+      `${p.progress}%`
+    ]);
+
+    (doc as any).autoTable({
+      head: [['ID', 'Project Name', 'Type', 'Budget', 'Status', 'Progress']],
+      body: tableData,
+      startY: 30,
+      styles: { font: 'helvetica' }
+    });
+
+    doc.save(`projects_report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+  };
+
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [bulkDeleteIds, setBulkDeleteIds] = useState<string[]>([]);
+
   const handleDelete = async (id: string) => {
-    if (window.confirm('คุณต้องการลบโครงการนี้ใช่หรือไม่?')) {
+    setDeleteId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (deleteId) {
       try {
-        await deleteDoc(doc(db, 'projects', id));
+        await deleteDoc(doc(db, 'projects', deleteId));
+        setDeleteId(null);
       } catch (error) {
         console.error('Error deleting project:', error);
+        setDeleteId(null);
+      }
+    } else if (bulkDeleteIds.length > 0) {
+      try {
+        const batch = writeBatch(db);
+        bulkDeleteIds.forEach(id => {
+          batch.delete(doc(db, 'projects', id));
+        });
+        await batch.commit();
+        setBulkDeleteIds([]);
+        setSelectedIds([]);
+      } catch (error) {
+        console.error('Error bulk deleting:', error);
+        setBulkDeleteIds([]);
       }
     }
   };
@@ -159,7 +309,10 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       progress: 0,
       lat: 16.05,
       lng: 103.65,
-      responsiblePerson: ''
+      responsiblePerson: '',
+      description: '',
+      locationName: '',
+      contractorPhone: ''
     });
     setEditingProject(null);
     setBudgetError(null);
@@ -198,7 +351,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       });
 
       if (rows.length < 2) {
-        alert('ไม่พบข้อมูลใน Google Sheet');
+        setNotification({ type: 'error', message: 'ไม่พบข้อมูลใน Google Sheet' });
         return;
       }
 
@@ -235,18 +388,68 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       }
       
       await batch.commit();
-      alert(`ซิงค์ข้อมูลสำเร็จ! นำเข้าทั้งหมด ${count} รายการ`);
+      setNotification({ type: 'success', message: `ซิงค์ข้อมูลสำเร็จ! นำเข้าทั้งหมด ${count} รายการ` });
     } catch (error) {
       console.error('Sync error:', error);
-      alert('เกิดข้อผิดพลาดในการซิงค์ข้อมูล: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      setNotification({ type: 'error', message: 'เกิดข้อผิดพลาดในการซิงค์ข้อมูล: ' + (error instanceof Error ? error.message : 'Unknown error') });
     } finally {
       setLoading(false);
     }
   };
 
-  const clearAllProjects = async () => {
-    if (!window.confirm('คุณต้องการลบโครงการทั้งหมดใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้')) return;
-    
+  const handleExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setLoading(true);
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet);
+
+      const batch = writeBatch(db);
+      let count = 0;
+
+      for (const item of jsonData) {
+        // Validation: Ensure required fields exist
+        if (!item.name || !item.budget) continue;
+
+        const projectData = {
+          name: item.name,
+          type: item.type || 'ถนน',
+          budget: Number(item.budget) || 0,
+          status: item.status || 'In Progress',
+          progress: Number(item.progress) || 0,
+          lat: Number(item.lat) || 16.05,
+          lng: Number(item.lng) || 103.65,
+          updatedAt: new Date().toISOString(),
+          contractor: item.contractor || '',
+          responsiblePerson: item.responsiblePerson || '',
+          fiscalYear: item.fiscalYear || '2569',
+          description: item.description || '',
+          locationName: item.locationName || '',
+          contractorPhone: item.contractorPhone || ''
+        };
+
+        const docRef = doc(collection(db, 'projects'));
+        batch.set(docRef, { ...projectData, id: `PROJ-${docRef.id.substr(0, 5).toUpperCase()}` });
+        count++;
+      }
+
+      await batch.commit();
+      setNotification({ type: 'success', message: `นำเข้าข้อมูลสำเร็จ! เพิ่มโครงการใหม่ ${count} รายการ` });
+    } catch (error) {
+      console.error('Excel import error:', error);
+      setNotification({ type: 'error', message: 'เกิดข้อผิดพลาดในการนำเข้าไฟล์ Excel: ' + (error instanceof Error ? error.message : 'Unknown error') });
+    } finally {
+      setLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const confirmClearAll = async () => {
     try {
       setLoading(true);
       const batch = writeBatch(db);
@@ -254,10 +457,11 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
         batch.delete(doc(db, 'projects', p.id));
       });
       await batch.commit();
-      alert('ลบข้อมูลโครงการทั้งหมดเรียบร้อยแล้ว');
+      setNotification({ type: 'success', message: 'ลบข้อมูลโครงการทั้งหมดเรียบร้อยแล้ว' });
+      setShowClearConfirm(false);
     } catch (error) {
       console.error('Error clearing projects:', error);
-      alert('เกิดข้อผิดพลาดในการลบข้อมูล');
+      setNotification({ type: 'error', message: 'เกิดข้อผิดพลาดในการลบข้อมูล' });
     } finally {
       setLoading(false);
     }
@@ -282,11 +486,22 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       }
 
       const result = await response.json();
-      
+      setImportData(result.data);
+      setShowImportConfirm(true);
+    } catch (error) {
+      console.error('Import error:', error);
+      setNotification({ type: 'error', message: error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการนำเข้าข้อมูล' });
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!importData.length) return;
+    
+    try {
       const batch = writeBatch(db);
       const importDate = new Date().toISOString();
 
-      result.data.forEach((item: any) => {
+      importData.forEach((item: any) => {
         const importRef = doc(collection(db, 'budget_imports'));
         batch.set(importRef, {
           ...item,
@@ -296,49 +511,41 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       });
 
       await batch.commit();
-      alert(`Successfully imported ${result.data.length} budget records`);
+      setShowImportConfirm(false);
+      setImportData([]);
+      setNotification({ type: 'success', message: `นำเข้าข้อมูลสำเร็จ ${importData.length} รายการ` });
     } catch (error) {
-      console.error('Import error:', error);
-      alert(error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการนำเข้าข้อมูล');
+      console.error('Confirm import error:', error);
+      setNotification({ type: 'error', message: 'เกิดข้อผิดพลาดในการบันทึกข้อมูล' });
     }
   };
 
-  const filteredProjects = projects.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         p.id.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'All' || p.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filteredProjects = useMemo(() => {
+    return projects.filter(p => {
+      const matchesSearch = p.name.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+                           p.id.toLowerCase().includes(debouncedSearchTerm.toLowerCase());
+      const matchesStatus = statusFilter === 'All' || p.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [projects, debouncedSearchTerm, statusFilter]);
 
-  const toggleSelectAll = () => {
+  const toggleSelectAll = useCallback(() => {
     if (selectedIds.length === filteredProjects.length) {
       setSelectedIds([]);
     } else {
       setSelectedIds(filteredProjects.map(p => p.id));
     }
-  };
+  }, [selectedIds.length, filteredProjects]);
 
-  const toggleSelect = (id: string) => {
+  const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
-  };
+  }, []);
 
-  const handleBulkDelete = async () => {
-    if (!window.confirm(`คุณต้องการลบ ${selectedIds.length} โครงการที่เลือกใช่หรือไม่?`)) return;
-
-    try {
-      const batch = writeBatch(db);
-      selectedIds.forEach(id => {
-        batch.delete(doc(db, 'projects', id));
-      });
-      await batch.commit();
-      setSelectedIds([]);
-    } catch (error) {
-      console.error('Error bulk deleting:', error);
-      alert('เกิดข้อผิดพลาดในการลบข้อมูลแบบกลุ่ม');
-    }
-  };
+  const handleBulkDelete = useCallback(() => {
+    setBulkDeleteIds(selectedIds);
+  }, [selectedIds]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     try {
@@ -360,9 +567,10 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       }
       
       setSelectedIds([]);
+      setNotification({ type: 'success', message: `อัปเดตสถานะ ${selectedIds.length} รายการสำเร็จ` });
     } catch (error) {
       console.error('Error bulk updating status:', error);
-      alert('เกิดข้อผิดพลาดในการอัปเดตสถานะแบบกลุ่ม');
+      setNotification({ type: 'error', message: 'เกิดข้อผิดพลาดในการอัปเดตสถานะแบบกลุ่ม' });
     }
   };
 
@@ -375,16 +583,64 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
     }).format(amount);
   };
 
+  if (loading) {
+    return (
+      <div className="space-y-6 animate-in fade-in duration-500">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-4 w-32" />
+          </div>
+          <div className="flex gap-3">
+            <Skeleton className="h-10 w-32" />
+            <Skeleton className="h-10 w-48" />
+          </div>
+        </div>
+        
+        <div className="flex gap-2">
+          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-8 w-20 rounded-xl" />)}
+        </div>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
+            <Skeleton key={i} className="h-[400px] rounded-[2rem]" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black text-neutral-900 tracking-tight">{title || 'จัดการโครงการ'}</h2>
-          {typeFilter && <p className="text-sm text-neutral-500 font-medium">หมวดหมู่: {typeFilter}</p>}
+          <div className="flex items-center gap-2 mt-1">
+            {typeFilter && <p className="text-sm text-neutral-500 font-medium">หมวดหมู่: {typeFilter}</p>}
+            {lastUpdated && (
+              <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest flex items-center gap-1.5 ml-2">
+                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                Live: {format(lastUpdated, 'HH:mm:ss')}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="flex flex-col md:flex-row md:items-center gap-4 flex-1 max-w-2xl justify-end">
-          <div className="relative flex-1 max-w-md">
+          <div className="flex flex-col md:flex-row md:items-center gap-4 flex-1 max-w-3xl justify-end">
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-neutral-400" />
+              <select 
+                className="px-4 py-3 bg-white border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none text-sm font-bold"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+              >
+                <option value="All">ทุกสถานะ</option>
+                <option value="In Progress">กำลังดำเนินการ</option>
+                <option value="Completed">ดำเนินการแล้วเสร็จ</option>
+                <option value="Delayed">ล่าช้ากว่าแผน</option>
+              </select>
+            </div>
+            <div className="relative flex-1 max-w-md">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400 w-5 h-5" />
             <input 
               type="text" 
@@ -417,6 +673,38 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
             </div>
             {isAdmin && !typeFilter && (
               <>
+                <div className="relative group">
+                  <button 
+                    className="flex items-center gap-2 px-4 py-3 bg-neutral-900 text-white rounded-xl font-bold hover:bg-neutral-800 transition-all"
+                  >
+                    <Download className="w-5 h-5" />
+                    Export
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-neutral-100 py-2 z-50 hidden group-hover:block">
+                      <button 
+                        onClick={handleExportCSV}
+                        className="w-full text-left px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50 flex items-center gap-2"
+                      >
+                        <FileText className="w-4 h-4" />
+                        Export to CSV
+                      </button>
+                      <button 
+                        onClick={handleExportXLSX}
+                        className="w-full text-left px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50 flex items-center gap-2"
+                      >
+                        <Database className="w-4 h-4" />
+                        Export to Excel (XLSX)
+                      </button>
+                      <button 
+                        onClick={handleExportPDF}
+                        className="w-full text-left px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50 flex items-center gap-2"
+                      >
+                        <FileText className="w-4 h-4" />
+                        Export to PDF
+                      </button>
+                    </div>
+                </div>
                 <button 
                   onClick={handleSyncGoogleSheet}
                   className="flex items-center gap-2 px-4 py-3 bg-green-50 text-green-700 border border-green-200 rounded-xl font-bold hover:bg-green-100 transition-all"
@@ -424,8 +712,22 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                   <Database className="w-5 h-5" />
                   Sync All
                 </button>
+                <input 
+                  type="file" 
+                  ref={fileInputRef}
+                  onChange={handleExcelImport}
+                  accept=".xlsx, .xls"
+                  className="hidden"
+                />
                 <button 
-                  onClick={clearAllProjects}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-4 py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-xl font-bold hover:bg-blue-100 transition-all"
+                >
+                  <Database className="w-5 h-5" />
+                  Import Excel
+                </button>
+                <button 
+                  onClick={() => setShowClearConfirm(true)}
                   className="flex items-center gap-2 px-4 py-3 bg-red-50 text-red-700 border border-red-200 rounded-xl font-bold hover:bg-red-100 transition-all"
                 >
                   <Trash2 className="w-5 h-5" />
@@ -522,7 +824,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-900 border-b border-slate-800">
-                    <th className="px-6 py-4 w-12">
+                    <th className="px-4 py-3 w-12">
                       <button 
                         onClick={toggleSelectAll}
                         className="text-slate-400 hover:text-white transition-all"
@@ -534,11 +836,11 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                         )}
                       </button>
                     </th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">โครงการ</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">งบประมาณ</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">สถานะ</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">ความก้าวหน้า</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">จัดการ</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">โครงการ</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest hidden md:table-cell">งบประมาณ</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">สถานะ</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">ความก้าวหน้า</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest">จัดการ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
@@ -547,7 +849,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                       key={project.id} 
                       className={`hover:bg-neutral-50 transition-colors group ${selectedIds.includes(project.id) ? 'bg-orange-50/50' : ''}`}
                     >
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3">
                         <button 
                           onClick={() => toggleSelect(project.id)}
                           className="text-neutral-400 hover:text-orange-600 transition-all"
@@ -559,7 +861,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                           )}
                         </button>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3">
                         <div className="flex flex-col">
                           <span className="font-bold text-neutral-900 group-hover:text-neutral-900 line-clamp-1">{project.name}</span>
                           <div className="flex items-center gap-2 mt-1">
@@ -568,13 +870,13 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3 hidden md:table-cell">
                         <span className="text-sm font-bold text-neutral-900">{formatCurrency(project.budget)}</span>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3">
                         <StatusBadge status={project.status} />
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden min-w-[80px]">
                             <div 
@@ -585,11 +887,11 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                           <span className="text-xs font-bold text-neutral-900">{project.progress}%</span>
                         </div>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <Link 
                             to={`/projects/${project.id}`}
-                            className="p-2 text-neutral-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-all"
+                            className="p-1.5 text-neutral-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-all"
                           >
                             <Eye className="w-4 h-4" />
                           </Link>
@@ -608,17 +910,20 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                                 progress: project.progress,
                                 lat: project.lat,
                                 lng: project.lng,
-                                responsiblePerson: project.responsiblePerson
+                                responsiblePerson: project.responsiblePerson,
+                                description: project.description || '',
+                                locationName: project.locationName || '',
+                                contractorPhone: project.contractorPhone || ''
                               }); 
                               setIsModalOpen(true); 
                             }}
-                            className="p-2 text-neutral-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                            className="p-1.5 text-neutral-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button 
                             onClick={() => handleDelete(project.id)}
-                            className="p-2 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                            className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -637,13 +942,6 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                   <p className="text-neutral-500 max-w-xs mx-auto mt-2 mb-8 font-medium">
                     ไม่พบรายการโครงการที่ตรงตามเงื่อนไข หรือยังไม่มีข้อมูลในระบบ
                   </p>
-                  <button 
-                    onClick={handleSyncGoogleSheet}
-                    className="flex items-center gap-2 px-8 py-3 bg-neutral-900 text-white rounded-xl font-bold hover:bg-neutral-800 shadow-lg shadow-neutral-900/20 transition-all active:scale-95"
-                  >
-                    <Database className="w-5 h-5" />
-                    Sync All
-                  </button>
                 </div>
               )}
             </div>
@@ -686,7 +984,10 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                         progress: project.progress,
                         lat: project.lat,
                         lng: project.lng,
-                        responsiblePerson: project.responsiblePerson
+                        responsiblePerson: project.responsiblePerson || '',
+                        description: project.description || '',
+                        locationName: project.locationName || '',
+                        contractorPhone: project.contractorPhone || ''
                       }); 
                       setIsModalOpen(true); 
                     }}
@@ -713,13 +1014,6 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                 <p className="text-neutral-500 max-w-xs mx-auto mt-2 mb-8 font-medium">
                   ไม่พบรายการโครงการที่ตรงตามเงื่อนไข หรือยังไม่มีข้อมูลในระบบ
                 </p>
-                <button 
-                  onClick={handleSyncGoogleSheet}
-                  className="flex items-center gap-2 px-8 py-3 bg-neutral-900 text-white rounded-xl font-bold hover:bg-neutral-800 shadow-lg shadow-neutral-900/20 transition-all active:scale-95"
-                >
-                  <Database className="w-5 h-5" />
-                  Sync All
-                </button>
               </div>
             )}
           </motion.div>
@@ -731,10 +1025,112 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
             exit={{ opacity: 0, scale: 0.95 }}
             className="h-[600px] bg-white rounded-3xl border border-neutral-200 shadow-sm overflow-hidden"
           >
-            <ProjectMap projects={filteredProjects} onSync={handleSyncGoogleSheet} />
+            <ProjectMap projects={filteredProjects} />
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Confirmation Dialog */}
+      {(deleteId || bulkDeleteIds.length > 0) && (
+        <div className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-8 animate-in fade-in zoom-in duration-200">
+            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Trash2 className="w-8 h-8 text-red-500" />
+            </div>
+            <h3 className="text-xl font-black text-neutral-900 text-center mb-2">ยืนยันการลบ</h3>
+            <p className="text-neutral-500 text-center mb-8 font-medium">
+              {deleteId ? 'คุณต้องการลบโครงการนี้ใช่หรือไม่?' : `คุณต้องการลบ ${bulkDeleteIds.length} โครงการที่เลือกใช่หรือไม่?`} การกระทำนี้ไม่สามารถย้อนกลับได้
+            </p>
+            <div className="flex gap-4">
+              <button 
+                onClick={() => { setDeleteId(null); setBulkDeleteIds([]); }}
+                className="flex-1 px-6 py-3 bg-neutral-100 text-neutral-900 rounded-xl font-bold hover:bg-neutral-200 transition-all"
+              >
+                ยกเลิก
+              </button>
+              <button 
+                onClick={confirmDelete}
+                className="flex-1 px-6 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-900/20 transition-all"
+              >
+                ลบโครงการ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clear All Confirmation Dialog */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-8 animate-in fade-in zoom-in duration-200">
+            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <AlertCircle className="w-8 h-8 text-red-500" />
+            </div>
+            <h3 className="text-xl font-black text-neutral-900 text-center mb-2">ยืนยันการลบทั้งหมด</h3>
+            <p className="text-neutral-500 text-center mb-8 font-medium">
+              คุณต้องการลบโครงการทั้งหมดในระบบใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้
+            </p>
+            <div className="flex gap-4">
+              <button 
+                onClick={() => setShowClearConfirm(false)}
+                className="flex-1 px-6 py-3 bg-neutral-100 text-neutral-900 rounded-xl font-bold hover:bg-neutral-200 transition-all"
+              >
+                ยกเลิก
+              </button>
+              <button 
+                onClick={confirmClearAll}
+                className="flex-1 px-6 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-900/20 transition-all"
+              >
+                ลบทั้งหมด
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Confirmation Dialog */}
+      {showImportConfirm && (
+        <div className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 animate-in fade-in zoom-in duration-200">
+            <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Database className="w-8 h-8 text-blue-500" />
+            </div>
+            <h3 className="text-xl font-black text-neutral-900 text-center mb-2">ยืนยันการนำเข้าข้อมูล</h3>
+            <p className="text-neutral-500 text-center mb-8 font-medium">
+              พบข้อมูลที่ต้องการนำเข้าจำนวน {importData.length} รายการ คุณต้องการบันทึกข้อมูลเหล่านี้ลงในระบบใช่หรือไม่?
+            </p>
+            <div className="flex gap-4">
+              <button 
+                onClick={() => { setShowImportConfirm(false); setImportData([]); }}
+                className="flex-1 px-6 py-3 bg-neutral-100 text-neutral-900 rounded-xl font-bold hover:bg-neutral-200 transition-all"
+              >
+                ยกเลิก
+              </button>
+              <button 
+                onClick={confirmImport}
+                className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-900/20 transition-all"
+              >
+                ยืนยันการนำเข้า
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notification Toast */}
+      {notification && (
+        <div className="fixed bottom-8 right-8 z-[150] animate-in slide-in-from-right duration-300">
+          <div className={`flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border ${
+            notification.type === 'success' ? 'bg-green-50 border-green-100 text-green-800' : 'bg-red-50 border-red-100 text-red-800'
+          }`}>
+            {notification.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+            <p className="text-sm font-bold">{notification.message}</p>
+            <button onClick={() => setNotification(null)} className="ml-2">
+              <X className="w-4 h-4 opacity-50 hover:opacity-100" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modal */}
       {isModalOpen && (
@@ -760,6 +1156,55 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                     className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none"
                     value={formData.name}
                     onChange={e => setFormData({...formData, name: e.target.value})}
+                  />
+                </div>
+                
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest">รายละเอียดโครงการ</label>
+                  <textarea 
+                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none"
+                    value={formData.description}
+                    onChange={e => setFormData({...formData, description: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest">สถานที่ตั้ง (ชื่อสถานที่)</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none"
+                    value={formData.locationName}
+                    onChange={e => setFormData({...formData, locationName: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest">เบอร์โทรศัพท์ผู้รับเหมา</label>
+                  <input 
+                    type="tel" 
+                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none"
+                    value={formData.contractorPhone}
+                    onChange={e => setFormData({...formData, contractorPhone: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest">วันที่เริ่มสัญญา</label>
+                  <input 
+                    type="date" 
+                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none"
+                    value={formData.startDate}
+                    onChange={e => setFormData({...formData, startDate: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest">วันที่สิ้นสุดสัญญา</label>
+                  <input 
+                    type="date" 
+                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none"
+                    value={formData.endDate}
+                    onChange={e => setFormData({...formData, endDate: e.target.value})}
                   />
                 </div>
                 

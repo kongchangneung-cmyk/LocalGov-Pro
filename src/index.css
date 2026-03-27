@@ -3,7 +3,18 @@
 @import "leaflet.markercluster/dist/MarkerCluster.css";
 @import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 
+:root {
+  font-size: 92%; /* Reduce overall scale by ~8-10% */
+}
+
 @layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
   }

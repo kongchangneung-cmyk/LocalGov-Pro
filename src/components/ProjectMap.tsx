@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, useMap, useMapEvents, Rectangle, Popup } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
 import { Link } from 'react-router-dom';
 import { Project } from './Dashboard';
 import { format } from 'date-fns';
-import { CheckCircle2, Clock, AlertCircle, Search, X, ChevronRight, MapPin, Database, MousePointer2, BoxSelect } from 'lucide-react';
+import { CheckCircle2, Clock, AlertCircle, Search, X, ChevronRight, MapPin, Database, MousePointer2, BoxSelect, Navigation, LocateFixed, ZoomIn, ZoomOut } from 'lucide-react';
 
 const createCustomIcon = (status: string) => {
   const colors = {
@@ -123,6 +123,72 @@ interface ProjectMapProps {
   onSync?: () => void;
 }
 
+const CenterMap: React.FC<{ lat: number, lng: number }> = ({ lat, lng }) => {
+  const map = useMap();
+  useEffect(() => {
+    map.flyTo([lat, lng], 16, { 
+      animate: true, 
+      duration: 2,
+      easeLinearity: 0.25
+    });
+  }, [lat, lng, map]);
+  return null;
+};
+
+const MapControls: React.FC<{ onRecenter: () => void, project?: Project, sidebarOpen?: boolean }> = ({ onRecenter, project, sidebarOpen }) => {
+  const map = useMap();
+
+  const handleLocateMe = () => {
+    map.locate({ setView: true, maxZoom: 16 });
+  };
+
+  return (
+    <div className={`absolute z-[1001] flex flex-col gap-2 transition-all duration-500 ${
+      sidebarOpen 
+        ? 'bottom-[65vh] right-4 md:bottom-8 md:right-[340px]' 
+        : 'bottom-8 right-4'
+    }`}>
+      {/* Custom Zoom Controls */}
+      <div className="flex flex-col bg-white/90 backdrop-blur-md rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden">
+        <button 
+          onClick={() => map.zoomIn()}
+          className="p-3 hover:bg-neutral-50 text-neutral-600 transition-colors border-b border-neutral-100"
+          title="ซูมเข้า"
+        >
+          <ZoomIn className="w-5 h-5" />
+        </button>
+        <button 
+          onClick={() => map.zoomOut()}
+          className="p-3 hover:bg-neutral-50 text-neutral-600 transition-colors"
+          title="ซูมออก"
+        >
+          <ZoomOut className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Locate Me Control */}
+      <button 
+        onClick={handleLocateMe}
+        className="p-4 bg-white/90 backdrop-blur-md text-neutral-900 rounded-2xl shadow-2xl border border-neutral-200 hover:bg-neutral-50 transition-all active:scale-95 group"
+        title="ตำแหน่งของฉัน"
+      >
+        <LocateFixed className="w-5 h-5 group-hover:text-orange-600 transition-colors" />
+      </button>
+
+      {/* Recenter on Project Control */}
+      {project && (
+        <button 
+          onClick={onRecenter}
+          className="p-4 bg-orange-600 text-white rounded-2xl shadow-2xl shadow-orange-900/20 hover:bg-orange-700 transition-all active:scale-95 group"
+          title="ดูตำแหน่งโครงการ"
+        >
+          <Navigation className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+        </button>
+      )}
+    </div>
+  );
+};
+
 const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All');
@@ -130,19 +196,38 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectionBounds, setSelectionBounds] = useState<L.LatLngBounds | null>(null);
+  const [centerTo, setCenterTo] = useState<{ lat: number, lng: number } | null>(null);
   const center: [number, number] = [16.05, 103.65]; // Default to Roi Et area
 
-  const uniqueTypes = Array.from(new Set(projects.map(p => p.type)));
+  const uniqueTypes = useMemo(() => Array.from(new Set(projects.map(p => p.type))), [projects]);
 
-  const filteredProjects = projects.filter((project) => {
-    const matchesSearch = project.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'All' || project.status === statusFilter;
-    const matchesType = typeFilter === 'All' || project.type === typeFilter;
-    const matchesBounds = !selectionBounds || selectionBounds.contains([project.lat, project.lng]);
-    return matchesSearch && matchesStatus && matchesType && matchesBounds;
-  });
+  const filteredProjects = useMemo(() => {
+    return projects.filter((project) => {
+      const matchesSearch = project.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesStatus = statusFilter === 'All' || project.status === statusFilter;
+      const matchesType = typeFilter === 'All' || project.type === typeFilter;
+      const matchesBounds = !selectionBounds || selectionBounds.contains([project.lat, project.lng]);
+      return matchesSearch && matchesStatus && matchesType && matchesBounds;
+    });
+  }, [projects, searchTerm, statusFilter, typeFilter, selectionBounds]);
 
-  const getStatusIcon = (status: string) => {
+  const villageBudgets = useMemo(() => {
+    return filteredProjects.reduce((acc, p) => {
+      acc[p.villageName] = (acc[p.villageName] || 0) + p.budget;
+      return acc;
+    }, {} as Record<string, number>);
+  }, [filteredProjects]);
+
+  const { maxBudget, topVillages } = useMemo(() => {
+    const budgets = Object.values(villageBudgets);
+    const max = budgets.length > 0 ? Math.max(...budgets) : 0;
+    const top = Object.entries(villageBudgets)
+      .filter(([_, budget]) => budget === max && max > 0)
+      .map(([village]) => village);
+    return { maxBudget: max, topVillages: top };
+  }, [villageBudgets]);
+
+  const getStatusIcon = useCallback((status: string) => {
     switch (status) {
       case 'Completed':
         return <CheckCircle2 className="w-4 h-4 text-green-500" />;
@@ -153,9 +238,9 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
       default:
         return <Clock className="w-4 h-4 text-neutral-400" />;
     }
-  };
+  }, []);
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = useCallback((status: string) => {
     switch (status) {
       case 'Completed':
         return 'text-green-700';
@@ -166,21 +251,98 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
       default:
         return 'text-neutral-700';
     }
-  };
+  }, []);
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = useCallback((amount: number) => {
     return new Intl.NumberFormat('th-TH', {
       style: 'currency',
       currency: 'THB',
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     }).format(amount);
-  };
+  }, []);
+
+  const projectMarkers = useMemo(() => {
+    return filteredProjects.map((project) => (
+      <Marker 
+        key={project.id} 
+        position={[project.lat, project.lng]}
+        icon={createCustomIcon(project.status)}
+        eventHandlers={{
+          click: () => {
+            if (onMarkerClick) onMarkerClick(project.id);
+          },
+        }}
+      >
+        <Popup className="project-popup">
+          <div className="p-1 min-w-[200px] font-sans">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[9px] font-bold text-neutral-400 uppercase tracking-widest">#{project.id}</span>
+              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${getStatusColor(project.status)} bg-neutral-50`}>
+                {project.status === 'In Progress' ? 'กำลังดำเนินการ' : 
+                 project.status === 'Completed' ? 'เสร็จสิ้น' : 
+                 project.status === 'Delayed' ? 'ล่าช้า' : project.status}
+              </span>
+            </div>
+            <h3 className="font-black text-neutral-900 text-sm mb-2 leading-tight">{project.name}</h3>
+            
+            <div className="space-y-2 mb-3">
+              <div className="flex items-center justify-between text-[10px] font-bold">
+                <span className="text-neutral-400 uppercase">Progress</span>
+                <span className="text-neutral-900">{project.progress}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    project.progress === 100 ? 'bg-green-500' : 
+                    project.status === 'Delayed' ? 'bg-red-500' : 'bg-neutral-900'
+                  }`}
+                  style={{ width: `${project.progress}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-neutral-400 font-bold uppercase">Budget</span>
+                <span className="font-black text-neutral-900">{formatCurrency(project.budget)}</span>
+              </div>
+              <div className="flex gap-2 mt-2">
+                <Link 
+                  to={`/projects/${project.id}`}
+                  className="flex-1 py-2 bg-neutral-900 text-white text-[9px] font-bold uppercase tracking-widest text-center rounded-lg hover:bg-neutral-800 transition-all shadow-sm"
+                >
+                  ดูรายละเอียด
+                </Link>
+                {project.googleMapsLink && (
+                  <a 
+                    href={project.googleMapsLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 bg-blue-50 text-blue-600 text-[9px] font-bold uppercase tracking-widest text-center rounded-lg hover:bg-blue-100 transition-all shadow-sm flex items-center justify-center"
+                    title="เปิดใน Google Maps"
+                  >
+                    <Navigation className="w-3 h-3" />
+                  </a>
+                )}
+                <button 
+                  onClick={() => setSelectedProject(project)}
+                  className="px-3 py-2 bg-neutral-100 text-neutral-900 text-[9px] font-bold uppercase tracking-widest text-center rounded-lg hover:bg-neutral-200 transition-all shadow-sm"
+                >
+                  แถบข้าง
+                </button>
+              </div>
+            </div>
+          </div>
+        </Popup>
+      </Marker>
+    ));
+  }, [filteredProjects, onMarkerClick, getStatusColor, formatCurrency]);
 
   return (
-    <div className="h-[600px] w-full relative group/map">
+    <div className="h-[500px] md:h-[700px] w-full relative group/map overflow-hidden rounded-2xl border border-neutral-200 shadow-inner">
       {/* Search Overlay */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-2xl px-4 flex flex-col gap-2">
+      <div className="absolute top-4 left-0 right-0 md:left-1/2 md:-translate-x-1/2 z-[1000] w-full md:max-w-2xl px-4 flex flex-col gap-2">
         <div className="flex gap-2">
           <div className="relative group/search flex-1">
             <div className="absolute inset-y-0 left-0 pl-7 flex items-center pointer-events-none">
@@ -220,14 +382,27 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
           </button>
         </div>
         
+        {/* Current Location Button */}
+        {projects.length === 1 && (
+          <div className="flex justify-start">
+            <button
+              onClick={() => setCenterTo({ lat: projects[0].lat, lng: projects[0].lng })}
+              className="px-5 py-2.5 bg-orange-600 text-white rounded-2xl shadow-xl shadow-orange-900/20 text-xs font-black uppercase tracking-widest hover:bg-orange-700 transition-all flex items-center gap-2 animate-in fade-in slide-in-from-left-4 duration-500"
+            >
+              <Navigation className="w-3.5 h-3.5" />
+              ดูตำแหน่งปัจจุบัน
+            </button>
+          </div>
+        )}
+        
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2 justify-center">
-          <div className="flex bg-white/95 backdrop-blur-sm p-1 rounded-xl shadow-lg border border-neutral-200">
+          <div className="flex bg-white/95 backdrop-blur-sm p-1 rounded-xl shadow-lg border border-neutral-200 overflow-x-auto max-w-full no-scrollbar">
             {['All', 'Completed', 'In Progress', 'Delayed'].map((status) => (
               <button
                 key={status}
                 onClick={() => setStatusFilter(status)}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                className={`px-3 py-1.5 text-[10px] md:text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
                   statusFilter === status 
                     ? 'bg-neutral-900 text-white shadow-md' 
                     : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100'
@@ -240,7 +415,7 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
             ))}
           </div>
 
-          <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-neutral-200 overflow-hidden">
+          <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-neutral-200 overflow-hidden hidden sm:block">
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
@@ -264,11 +439,35 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
             </span>
           </div>
         )}
+        
+        {/* Budget Info Overlay */}
+        {filteredProjects.length > 0 && (
+          <div className="absolute top-24 right-4 z-[1000] bg-white/95 backdrop-blur-sm p-4 rounded-2xl border border-neutral-200 shadow-xl hidden md:block">
+            <h4 className="text-xs font-black text-neutral-900 uppercase tracking-widest mb-2">หมู่บ้านที่ได้รับงบสูงสุด</h4>
+            <p className="text-sm font-bold text-orange-600">{topVillages.join(', ')}</p>
+            <p className="text-xs font-bold text-neutral-600">{formatCurrency(maxBudget)}</p>
+          </div>
+        )}
       </div>
 
-      <MapContainer center={center} zoom={13} scrollWheelZoom={false} className="h-full w-full rounded-2xl">
+      <MapContainer 
+        center={center} 
+        zoom={13} 
+        scrollWheelZoom={true} 
+        zoomSnap={0.5}
+        zoomDelta={0.5}
+        wheelPxPerZoomLevel={120}
+        zoomControl={false}
+        className="h-full w-full rounded-2xl"
+      >
         <ChangeView projects={filteredProjects} />
         <SelectionTool active={selectionMode} onSelectionEnd={(bounds) => setSelectionBounds(bounds)} />
+        {centerTo && <CenterMap lat={centerTo.lat} lng={centerTo.lng} />}
+        <MapControls 
+          onRecenter={() => projects.length === 1 && setCenterTo({ lat: projects[0].lat, lng: projects[0].lng })} 
+          project={projects.length === 1 ? projects[0] : undefined}
+          sidebarOpen={!!selectedProject}
+        />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -279,70 +478,7 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
           spiderfyOnMaxZoom={true}
           iconCreateFunction={createClusterCustomIcon}
         >
-          {filteredProjects.map((project) => (
-            <Marker 
-              key={project.id} 
-              position={[project.lat, project.lng]}
-              icon={createCustomIcon(project.status)}
-              eventHandlers={{
-                click: () => {
-                  // Removed automatic sidebar opening to favor the new Popup for quick details
-                  if (onMarkerClick) onMarkerClick(project.id);
-                },
-              }}
-            >
-              <Popup className="project-popup">
-                <div className="p-1 min-w-[200px] font-sans">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[9px] font-bold text-neutral-400 uppercase tracking-widest">#{project.id}</span>
-                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${getStatusColor(project.status)} bg-neutral-50`}>
-                      {project.status === 'In Progress' ? 'กำลังดำเนินการ' : 
-                       project.status === 'Completed' ? 'เสร็จสิ้น' : 
-                       project.status === 'Delayed' ? 'ล่าช้า' : project.status}
-                    </span>
-                  </div>
-                  <h3 className="font-black text-neutral-900 text-sm mb-2 leading-tight">{project.name}</h3>
-                  
-                  <div className="space-y-2 mb-3">
-                    <div className="flex items-center justify-between text-[10px] font-bold">
-                      <span className="text-neutral-400 uppercase">Progress</span>
-                      <span className="text-neutral-900">{project.progress}%</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-neutral-100 rounded-full overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          project.progress === 100 ? 'bg-green-500' : 
-                          project.status === 'Delayed' ? 'bg-red-500' : 'bg-neutral-900'
-                        }`}
-                        style={{ width: `${project.progress}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className="text-neutral-400 font-bold uppercase">Budget</span>
-                      <span className="font-black text-neutral-900">{formatCurrency(project.budget)}</span>
-                    </div>
-                    <div className="flex gap-2 mt-2">
-                      <Link 
-                        to={`/projects/${project.id}`}
-                        className="flex-1 py-2 bg-neutral-900 text-white text-[9px] font-bold uppercase tracking-widest text-center rounded-lg hover:bg-neutral-800 transition-all shadow-sm"
-                      >
-                        ดูรายละเอียด
-                      </Link>
-                      <button 
-                        onClick={() => setSelectedProject(project)}
-                        className="px-3 py-2 bg-neutral-100 text-neutral-900 text-[9px] font-bold uppercase tracking-widest text-center rounded-lg hover:bg-neutral-200 transition-all shadow-sm"
-                      >
-                        แถบข้าง
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
+          {projectMarkers}
         </MarkerClusterGroup>
         {selectionBounds && (
           <Rectangle bounds={selectionBounds} pathOptions={{ color: '#f97316', weight: 2, fillOpacity: 0.1 }} />
@@ -351,7 +487,7 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
 
       {/* Admin Controls Overlay */}
       {onSync && (
-        <div className="absolute top-4 right-4 z-[1000] flex flex-col items-end gap-2">
+        <div className="absolute top-4 right-4 z-[1000] flex flex-col items-end gap-2 hidden sm:flex">
           <button 
             onClick={onSync}
             className="flex items-center gap-2 px-3 py-2 bg-neutral-900/90 backdrop-blur-sm text-white rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-neutral-800 shadow-xl transition-all active:scale-95 border border-neutral-700"
@@ -359,6 +495,20 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
           >
             <Database className="w-3 h-3" />
             ซิงค์ข้อมูล (ADMIN)
+          </button>
+          <button 
+            onClick={() => {
+              if (window.confirm('คุณต้องการล้างข้อมูลโครงการทั้งหมดบนแผนที่ใช่หรือไม่?')) {
+                // Assuming onSync can handle clearing or we need a new prop
+                // For now, we'll just log it as requested by the prompt structure
+                console.log('Clearing all projects');
+              }
+            }}
+            className="flex items-center gap-2 px-3 py-2 bg-red-600/90 backdrop-blur-sm text-white rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-red-700 shadow-xl transition-all active:scale-95 border border-red-700"
+            title="ล้างข้อมูลโครงการทั้งหมด"
+          >
+            <X className="w-3 h-3" />
+            ล้างข้อมูลทั้งหมด
           </button>
         </div>
       )}
@@ -376,20 +526,23 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
         </div>
       )}
 
-      {/* Project Details Sidebar */}
+      {/* Project Details Sidebar / Bottom Sheet */}
       {selectedProject && (
-        <div className="absolute top-4 right-4 bottom-4 w-80 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-neutral-200 z-[1000] flex flex-col overflow-hidden animate-in slide-in-from-right-8 fade-in duration-300">
-          <div className="p-4 border-b border-neutral-100 flex items-center justify-between bg-white">
-            <h3 className="font-black text-neutral-900 text-sm uppercase tracking-widest">รายละเอียดโครงการ</h3>
+        <div className="absolute bottom-0 left-0 right-0 md:top-4 md:right-4 md:bottom-4 md:left-auto md:w-80 bg-white/95 backdrop-blur-md rounded-t-[2.5rem] md:rounded-2xl shadow-2xl border-t md:border border-neutral-200 z-[1000] flex flex-col overflow-hidden animate-in slide-in-from-bottom-full md:slide-in-from-right-8 fade-in duration-500 max-h-[85vh] md:max-h-none">
+          {/* Drag Handle for Mobile */}
+          <div className="w-12 h-1.5 bg-neutral-200 rounded-full mx-auto mt-3 mb-1 md:hidden" />
+          
+          <div className="p-4 md:p-5 border-b border-neutral-100 flex items-center justify-between bg-white/50">
+            <h3 className="font-black text-neutral-900 text-xs md:text-sm uppercase tracking-widest">รายละเอียดโครงการ</h3>
             <button 
               onClick={() => setSelectedProject(null)}
-              className="p-1.5 hover:bg-neutral-100 rounded-lg transition-colors text-neutral-400 hover:text-neutral-900"
+              className="p-2 hover:bg-neutral-100 rounded-xl transition-colors text-neutral-400 hover:text-neutral-900"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5 md:w-4 md:h-4" />
             </button>
           </div>
           
-          <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto p-6 md:p-5 custom-scrollbar">
             <div className="flex flex-col mb-6">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Project Name</span>
@@ -453,13 +606,26 @@ const ProjectMap: React.FC<ProjectMapProps> = ({ projects, onMarkerClick, onSync
                 </span>
               </div>
             </div>
-            <Link 
-              to={`/projects/${selectedProject.id}`}
-              className="flex items-center justify-center gap-2 w-full py-3 bg-neutral-900 text-white text-xs font-bold uppercase tracking-widest rounded-xl hover:bg-neutral-800 transition-all shadow-lg shadow-neutral-900/10 active:scale-[0.98]"
-            >
-              ดูรายละเอียดเพิ่มเติม
-              <ChevronRight className="w-4 h-4" />
-            </Link>
+            <div className="flex gap-2">
+              <Link 
+                to={`/projects/${selectedProject.id}`}
+                className="flex-1 flex items-center justify-center gap-2 py-3 bg-neutral-900 text-white text-xs font-bold uppercase tracking-widest rounded-xl hover:bg-neutral-800 transition-all shadow-lg shadow-neutral-900/10 active:scale-[0.98]"
+              >
+                ดูรายละเอียด
+                <ChevronRight className="w-4 h-4" />
+              </Link>
+              {selectedProject.googleMapsLink && (
+                <a 
+                  href={selectedProject.googleMapsLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-3 bg-blue-50 text-blue-600 text-xs font-bold uppercase tracking-widest rounded-xl hover:bg-blue-100 transition-all shadow-sm flex items-center justify-center gap-2"
+                  title="เปิดใน Google Maps"
+                >
+                  <Navigation className="w-4 h-4" />
+                </a>
+              )}
+            </div>
           </div>
         </div>
       )}
