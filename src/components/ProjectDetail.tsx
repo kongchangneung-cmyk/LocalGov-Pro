@@ -28,8 +28,10 @@ import {
 import { Link } from 'react-router-dom';
 import ProjectMap from './ProjectMap';
 import ProjectAI from './ProjectAI';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
+import { DayPicker } from 'react-day-picker';
+import 'react-day-picker/dist/style.css';
 
 const ProjectDetail: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
@@ -783,6 +785,44 @@ const ProjectDetail: React.FC = () => {
 
         {/* Right Column: Sidebar */}
         <div className="space-y-6">
+          {/* Calendar View */}
+          {(project.startDate || project.endDate) && (
+            <div className="bg-white p-6 rounded-3xl border border-neutral-200 shadow-sm space-y-4">
+              <h3 className="font-black text-neutral-900 tracking-tight flex items-center gap-2">
+                <Clock className="w-5 h-5 text-orange-500" />
+                ระยะเวลาโครงการ
+              </h3>
+              <div className="flex justify-center">
+                <DayPicker
+                  mode="range"
+                  selected={{
+                    from: project.startDate ? parseISO(project.startDate) : undefined,
+                    to: project.endDate ? parseISO(project.endDate) : undefined
+                  }}
+                  modifiers={{
+                    start: project.startDate ? parseISO(project.startDate) : undefined,
+                    end: project.endDate ? parseISO(project.endDate) : undefined
+                  }}
+                  modifiersStyles={{
+                    start: { backgroundColor: '#f97316', color: 'white', fontWeight: 'bold' },
+                    end: { backgroundColor: '#f97316', color: 'white', fontWeight: 'bold' }
+                  }}
+                  className="bg-neutral-50 p-4 rounded-2xl border border-neutral-100"
+                />
+              </div>
+              <div className="flex justify-between text-xs font-bold text-neutral-500 px-2">
+                <div className="flex flex-col items-center">
+                  <span className="uppercase tracking-widest text-[10px] text-neutral-400">เริ่มต้น</span>
+                  <span className="text-neutral-900">{project.startDate ? format(parseISO(project.startDate), 'dd MMM yyyy') : '-'}</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <span className="uppercase tracking-widest text-[10px] text-neutral-400">สิ้นสุด</span>
+                  <span className="text-neutral-900">{project.endDate ? format(parseISO(project.endDate), 'dd MMM yyyy') : '-'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Installments Timeline */}
           <div className="bg-white p-6 rounded-3xl border border-neutral-200 shadow-sm space-y-6">
             <div className="space-y-4">

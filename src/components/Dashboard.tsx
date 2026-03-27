@@ -79,17 +79,31 @@ export interface Project {
   }[];
 }
 
-type SortOption = 'updatedAt' | 'budget' | 'progress';
 type DashboardTab = 'overview' | 'projects' | 'integration';
+
+const formatCurrency = (amount: number) => {
+  return new Intl.NumberFormat('th-TH', {
+    style: 'currency',
+    currency: 'THB',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount);
+};
+
+const formatCompactNumber = (number: number) => {
+  if (number >= 1000000) {
+    return (number / 1000000).toFixed(2) + 'M';
+  } else if (number >= 1000) {
+    return (number / 1000).toFixed(1) + 'K';
+  }
+  return number.toString();
+};
 
 const Dashboard: React.FC = () => {
   const { user, isAdmin } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [highlightedProjectId, setHighlightedProjectId] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortOption>('updatedAt');
-  const [fiscalYearFilter, setFiscalYearFilter] = useState<string>('All');
-  const [projectTypeFilter, setProjectTypeFilter] = useState<string>('All');
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
   const [syncSettings, setSyncSettings] = useState({
     sheetId: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
@@ -307,6 +321,23 @@ const Dashboard: React.FC = () => {
     return last6Months;
   }, [projects]);
 
+  const budgetTypeData = useMemo(() => {
+    const typeBudgets: Record<string, number> = {};
+    projects.forEach(p => {
+      const type = p.type || 'อื่นๆ';
+      typeBudgets[type] = (typeBudgets[type] || 0) + p.budget;
+    });
+
+    const colors = ['#f97316', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+    return Object.entries(typeBudgets)
+      .map(([name, budget], index) => ({
+        name,
+        value: budget,
+        color: colors[index % colors.length]
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [projects]);
+
   const stats = useMemo(() => {
     const totalBudget = projects.reduce((sum, p) => sum + p.budget, 0);
     const avgProgress = projects.length > 0 
@@ -323,41 +354,6 @@ const Dashboard: React.FC = () => {
       activeCount
     };
   }, [projects]);
-
-  const uniqueFiscalYears = useMemo(() => {
-    const years = projects.map(p => p.fiscalYear).filter((y): y is string => !!y);
-    return Array.from(new Set(years)).sort((a, b) => b.localeCompare(a));
-  }, [projects]);
-
-  const uniqueProjectTypes = useMemo(() => {
-    const types = projects.map(p => p.type).filter((t): t is string => !!t);
-    return Array.from(new Set(types)).sort((a, b) => a.localeCompare(b));
-  }, [projects]);
-
-  const filteredAndSortedProjects = useMemo(() => {
-    let filtered = [...projects];
-    
-    if (fiscalYearFilter !== 'All') {
-      filtered = filtered.filter(p => p.fiscalYear === fiscalYearFilter);
-    }
-
-    if (projectTypeFilter !== 'All') {
-      filtered = filtered.filter(p => p.type === projectTypeFilter);
-    }
-
-    return filtered.sort((a, b) => {
-      if (sortBy === 'updatedAt') {
-        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-      }
-      if (sortBy === 'budget') {
-        return b.budget - a.budget;
-      }
-      if (sortBy === 'progress') {
-        return b.progress - a.progress;
-      }
-      return 0;
-    });
-  }, [projects, sortBy, fiscalYearFilter, projectTypeFilter]);
 
   if (loading) {
     return (
@@ -480,7 +476,7 @@ const Dashboard: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest mb-1">งบประมาณรวม</p>
-                  <h2 className="text-3xl font-black tracking-tighter text-neutral-900">฿{(stats.totalBudget / 1000000).toFixed(1)}M</h2>
+                  <h2 className="text-3xl font-black tracking-tighter text-neutral-900">{formatCurrency(stats.totalBudget)}</h2>
                 </div>
               </div>
             </div>
@@ -552,6 +548,7 @@ const Dashboard: React.FC = () => {
                     />
                     <YAxis hide />
                     <Tooltip 
+                      formatter={(value: number) => [formatCurrency(value), 'งบประมาณ']}
                       contentStyle={{ 
                         backgroundColor: '#fff', 
                         borderRadius: '16px', 
@@ -572,6 +569,81 @@ const Dashboard: React.FC = () => {
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
+            </div>
+
+            {/* Budget Breakdown by Type */}
+            <div className="bg-white p-6 rounded-[2rem] border border-neutral-200 shadow-sm flex flex-col">
+              <h3 className="text-lg font-black text-neutral-900 tracking-tight mb-1">งบประมาณตามประเภท</h3>
+              <p className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest mb-6">สัดส่วนงบประมาณแยกตามหมวดหมู่</p>
+              
+              <div className="flex-1 flex items-center justify-center relative">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="text-center">
+                    <p className="text-xl font-black text-neutral-900 tracking-tighter">฿{formatCompactNumber(stats.totalBudget)}</p>
+                    <p className="text-[8px] font-bold text-neutral-400 uppercase tracking-widest">รวมทั้งหมด</p>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <PieChart>
+                    <Pie
+                      data={budgetTypeData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={70}
+                      outerRadius={90}
+                      paddingAngle={8}
+                      dataKey="value"
+                      stroke="none"
+                    >
+                      {budgetTypeData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      formatter={(value: number) => [formatCurrency(value), 'งบประมาณ']}
+                      contentStyle={{ 
+                        backgroundColor: '#fff', 
+                        borderRadius: '16px', 
+                        border: '1px solid #e5e5e5',
+                        boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                        fontSize: '10px',
+                        fontWeight: '700'
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="mt-6 space-y-2">
+                {budgetTypeData.slice(0, 4).map((item, index) => (
+                  <div key={index} className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
+                      <span className="text-[10px] font-bold text-neutral-600 truncate max-w-[100px]">{item.name}</span>
+                    </div>
+                    <span className="text-[10px] font-black text-neutral-900">{((item.value / stats.totalBudget) * 100).toFixed(1)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Map Section */}
+            <div className="lg:col-span-2 bg-white p-4 rounded-[2.5rem] border border-neutral-200 shadow-sm overflow-hidden min-h-[500px]">
+              <div className="flex items-center justify-between px-4 py-2 mb-2">
+                <div>
+                  <h3 className="text-lg font-black text-neutral-900 tracking-tight">แผนที่โครงการ</h3>
+                  <p className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest">แสดงตำแหน่งโครงการทั้งหมด</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-50 rounded-full border border-neutral-100">
+                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" />
+                    <span className="text-[10px] font-black text-neutral-900 uppercase tracking-widest">{projects.length} โครงการ</span>
+                  </div>
+                </div>
+              </div>
+              <ProjectMap projects={projects} onMarkerClick={handleMarkerClick} />
             </div>
 
             {/* Status Breakdown */}
@@ -680,63 +752,12 @@ const Dashboard: React.FC = () => {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
             <div>
               <h3 className="text-xl font-black text-neutral-900 tracking-tight">รายการโครงการ</h3>
-              <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">จัดเรียงตามที่เลือก</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Fiscal Year Filter */}
-              <div className="relative">
-                <select 
-                  value={fiscalYearFilter}
-                  onChange={(e) => setFiscalYearFilter(e.target.value)}
-                  className="appearance-none text-xs font-bold text-neutral-700 bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-2 pr-8 outline-none focus:ring-2 focus:ring-neutral-900 cursor-pointer"
-                >
-                  <option value="All">ปีงบประมาณ: ทั้งหมด</option>
-                  {uniqueFiscalYears.map(year => (
-                    <option key={year} value={year}>ปีงบประมาณ: {year}</option>
-                  ))}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                  <ChevronDown className="w-3 h-3 text-neutral-500" />
-                </div>
-              </div>
-
-              {/* Project Type Filter */}
-              <div className="relative">
-                <select 
-                  value={projectTypeFilter}
-                  onChange={(e) => setProjectTypeFilter(e.target.value)}
-                  className="appearance-none text-xs font-bold text-neutral-700 bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-2 pr-8 outline-none focus:ring-2 focus:ring-neutral-900 cursor-pointer"
-                >
-                  <option value="All">ประเภท: ทั้งหมด</option>
-                  {uniqueProjectTypes.map(type => (
-                    <option key={type} value={type}>ประเภท: {type}</option>
-                  ))}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                  <ChevronDown className="w-3 h-3 text-neutral-500" />
-                </div>
-              </div>
-
-              {/* Sort Select */}
-              <div className="relative hidden sm:block">
-                <select 
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as SortOption)}
-                  className="appearance-none text-xs font-bold text-neutral-700 bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-2 pr-8 outline-none focus:ring-2 focus:ring-neutral-900 cursor-pointer"
-                >
-                  <option value="updatedAt">อัปเดตล่าสุด</option>
-                  <option value="budget">งบประมาณสูงสุด</option>
-                  <option value="progress">ความก้าวหน้าสูงสุด</option>
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                  <ChevronDown className="w-3 h-3 text-neutral-500" />
-                </div>
-              </div>
+              <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">ข้อมูลโครงการทั้งหมด</p>
             </div>
           </div>
           <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
             <ProjectTable 
-              projects={filteredAndSortedProjects} 
+              projects={projects} 
               isAdmin={isAdmin} 
               highlightedProjectId={highlightedProjectId}
               onSync={isAdmin ? handleSyncGoogleSheet : undefined}

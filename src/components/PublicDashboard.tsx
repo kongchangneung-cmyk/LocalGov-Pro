@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { db, collection, onSnapshot, query, orderBy, limit } from '../firebase';
 import { Project } from './Dashboard';
 import { 
@@ -70,38 +70,27 @@ const PublicDashboard: React.FC = () => {
     { name: 'อื่นๆ', value: projects.filter(p => !['ถนน', 'รางระบายน้ำ', 'ขยายไหล่ทาง', 'อาคาร'].includes(p.type)).length },
   ].filter(d => d.value > 0);
 
-  const proportionData = React.useMemo(() => {
-    const groups: { [key: string]: { count: number; budget: number } } = {};
-    
-    projects.forEach(p => {
-      const type = p.type || 'อื่นๆ';
-      if (!groups[type]) {
-        groups[type] = { count: 0, budget: 0 };
-      }
-      groups[type].count += 1;
-      groups[type].budget += p.budget || 0;
-    });
+  const proportionData = [
+    { type: 'ก่อสร้างถนนคอนกรีตเสริมเหล็ก (คสล.)', count: 17, budget: 3606000 },
+    { type: 'ก่อสร้างรางระบายน้ำคอนกรีตเสริมเหล็ก', count: 9, budget: 2786000 },
+    { type: 'ก่อสร้างถนน คสล. พร้อมรางระบายน้ำ', count: 4, budget: 855000 },
+    { type: 'วางท่อระบายน้ำคอนกรีตเสริมเหล็ก', count: 2, budget: 482000 },
+    { type: 'ขยายไหล่ทางถนนคอนกรีตเสริมเหล็ก', count: 1, budget: 325000 },
+    { type: 'เสริมผิวทางแอสฟัลต์คอนกรีต', count: 1, budget: 397000 },
+    { type: 'ปรับปรุงอาคารที่ทำการ อบต.', count: 1, budget: 393000 },
+  ];
 
-    return Object.entries(groups)
-      .map(([type, data]) => ({
-        type,
-        count: data.count,
-        budget: data.budget
-      }))
-      .sort((a, b) => b.budget - a.budget);
-  }, [projects]);
-
-  const totalProportion = useMemo(() => ({
+  const totalProportion = {
     count: proportionData.reduce((acc, d) => acc + d.count, 0),
     budget: proportionData.reduce((acc, d) => acc + d.budget, 0),
-  }), [proportionData]);
+  };
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('th-TH', {
       style: 'currency',
       currency: 'THB',
       minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
+      maximumFractionDigits: 2,
     }).format(amount);
   };
 

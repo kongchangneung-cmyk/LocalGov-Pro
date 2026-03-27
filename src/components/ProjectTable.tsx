@@ -12,7 +12,7 @@ interface ProjectTableProps {
   onSync?: () => void;
 }
 
-type SortColumn = 'name' | 'budget' | 'progress' | 'status' | null;
+type SortColumn = 'name' | 'budget' | 'progress' | 'status' | 'responsiblePerson' | null;
 type SortDirection = 'asc' | 'desc';
 
 const ProjectTable: React.FC<ProjectTableProps> = ({ projects, isAdmin, highlightedProjectId, onSync }) => {
@@ -46,8 +46,13 @@ const ProjectTable: React.FC<ProjectTableProps> = ({ projects, isAdmin, highligh
 
     if (sortColumn) {
       result.sort((a, b) => {
-        let aValue: any = a[sortColumn];
-        let bValue: any = b[sortColumn];
+        let aValue: any = a[sortColumn as keyof Project];
+        let bValue: any = b[sortColumn as keyof Project];
+        
+        if (sortColumn === 'responsiblePerson') {
+          aValue = a.responsiblePerson || a.supervisor || '';
+          bValue = b.responsiblePerson || b.supervisor || '';
+        }
         
         if (sortColumn === 'budget' || sortColumn === 'progress') {
           aValue = Number(aValue) || 0;
@@ -176,7 +181,12 @@ const ProjectTable: React.FC<ProjectTableProps> = ({ projects, isAdmin, highligh
               >
                 สถานะ {renderSortIcon('status')}
               </th>
-              <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest hidden lg:table-cell">ผู้รับผิดชอบ</th>
+              <th 
+                className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest hidden lg:table-cell cursor-pointer hover:text-white transition-colors"
+                onClick={() => handleSort('responsiblePerson')}
+              >
+                ผู้รับผิดชอบ {renderSortIcon('responsiblePerson')}
+              </th>
               <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest hidden xl:table-cell">ผู้รับเหมา</th>
               <th 
                 className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest cursor-pointer hover:text-white transition-colors"
@@ -196,7 +206,7 @@ const ProjectTable: React.FC<ProjectTableProps> = ({ projects, isAdmin, highligh
                 className={`transition-all duration-500 group ${
                   highlightedProjectId === project.id 
                     ? 'bg-orange-50 ring-2 ring-orange-500 ring-inset z-10' 
-                    : index % 2 === 0 ? 'bg-white hover:bg-neutral-50' : 'bg-neutral-50/50 hover:bg-neutral-50'
+                    : index % 2 === 0 ? 'bg-white hover:bg-neutral-100' : 'bg-neutral-100/50 hover:bg-neutral-100'
                 }`}
               >
                 <td className="px-4 py-3">

@@ -4,7 +4,8 @@ import { Skeleton } from './ui/Skeleton';
 import * as XLSX from 'xlsx';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../useAuth';
-import { db, collection, onSnapshot, query, orderBy, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch } from '../firebase';
+import { db, collection, onSnapshot, query, orderBy, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch, storage } from '../firebase';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { handleFirestoreError } from '../utils/firestoreErrorHandler';
 import { Project } from './Dashboard';
 import { notifyProjectDelay, notifyProjectUpdate } from '../utils/notificationService';
@@ -54,6 +55,8 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
   const [viewMode, setViewMode] = useState<'table' | 'grid' | 'map'>('grid');
   const [budgetError, setBudgetError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('All');
+  const [contractorFilter, setContractorFilter] = useState<string>('All');
+  const [responsiblePersonFilter, setResponsiblePersonFilter] = useState<string>('All');
   const [showImportConfirm, setShowImportConfirm] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [importData, setImportData] = useState<any[]>([]);
@@ -79,6 +82,12 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
     description: string;
     locationName: string;
     contractorPhone: string;
+    images?: {
+      url: string;
+      name: string;
+      uploadedAt: string;
+      uploadedBy: string;
+    }[];
   }
 
   const [formData, setFormData] = useState<FormData>({
@@ -96,8 +105,12 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
     responsiblePerson: '',
     description: '',
     locationName: '',
-    contractorPhone: ''
+    contractorPhone: '',
+    images: []
   });
+
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
 
   useEffect(() => {
     if (notification) {
@@ -115,10 +128,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       const projectsData: Project[] = [];
       snapshot.forEach((doc) => {
         const data = { ...doc.data(), id: doc.id } as Project;
-        // Apply type filter if provided
-        if (!typeFilter || data.type === typeFilter || (typeFilter === 'โครงสร้างพื้นฐาน' && ['ถนน', 'รางระบายน้ำ', 'ท่อระบายน้ำ'].includes(data.type))) {
-          projectsData.push(data);
-        }
+        projectsData.push(data);
       });
       setProjects(projectsData);
       setLastUpdated(new Date());
@@ -129,7 +139,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
     });
 
     return () => unsubscribe();
-  }, [user, typeFilter]);
+  }, [user]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,10 +150,27 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
     }
     
     setBudgetError(null);
+    setUploadingImages(true);
 
     try {
+      const uploadedImages = [...(formData.images || [])];
+
+      for (const file of selectedFiles) {
+        const fileRef = ref(storage, `projects/${Date.now()}_${file.name}`);
+        const uploadTask = await uploadBytesResumable(fileRef, file);
+        const downloadURL = await getDownloadURL(uploadTask.ref);
+        
+        uploadedImages.push({
+          url: downloadURL,
+          name: file.name,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: user?.displayName || user?.email || 'Unknown'
+        });
+      }
+
       const data = {
         ...formData,
+        images: uploadedImages,
         updatedAt: new Date().toISOString()
       };
 
@@ -175,6 +202,9 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       resetForm();
     } catch (error) {
       console.error('Error saving project:', error);
+      setNotification({ type: 'error', message: 'เกิดข้อผิดพลาดในการบันทึกข้อมูล' });
+    } finally {
+      setUploadingImages(false);
     }
   };
 
@@ -312,8 +342,10 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       responsiblePerson: '',
       description: '',
       locationName: '',
-      contractorPhone: ''
+      contractorPhone: '',
+      images: []
     });
+    setSelectedFiles([]);
     setEditingProject(null);
     setBudgetError(null);
   };
@@ -525,9 +557,15 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
       const matchesSearch = p.name.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
                            p.id.toLowerCase().includes(debouncedSearchTerm.toLowerCase());
       const matchesStatus = statusFilter === 'All' || p.status === statusFilter;
-      return matchesSearch && matchesStatus;
+      const matchesContractor = contractorFilter === 'All' || p.contractor === contractorFilter;
+      const matchesResponsiblePerson = responsiblePersonFilter === 'All' || (p.responsiblePerson || p.supervisor) === responsiblePersonFilter;
+      const matchesType = !typeFilter || p.type === typeFilter || (typeFilter === 'โครงสร้างพื้นฐาน' && ['ถนน', 'รางระบายน้ำ', 'ท่อระบายน้ำ'].includes(p.type || ''));
+      return matchesSearch && matchesStatus && matchesContractor && matchesResponsiblePerson && matchesType;
     });
-  }, [projects, debouncedSearchTerm, statusFilter]);
+  }, [projects, debouncedSearchTerm, statusFilter, contractorFilter, responsiblePersonFilter, typeFilter]);
+
+  const uniqueContractors = useMemo(() => Array.from(new Set(projects.map(p => p.contractor).filter(Boolean))), [projects]);
+  const uniqueResponsiblePersons = useMemo(() => Array.from(new Set(projects.map(p => p.responsiblePerson || p.supervisor).filter(Boolean))), [projects]);
 
   const toggleSelectAll = useCallback(() => {
     if (selectedIds.length === filteredProjects.length) {
@@ -761,6 +799,24 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
             {status === 'All' ? 'ทั้งหมด' : status}
           </button>
         ))}
+        
+        <select 
+          value={contractorFilter}
+          onChange={(e) => setContractorFilter(e.target.value)}
+          className="px-4 py-2 rounded-xl text-xs font-bold transition-all border bg-white text-neutral-500 border-neutral-200 hover:border-neutral-300 outline-none"
+        >
+          <option value="All">ผู้รับเหมา: ทั้งหมด</option>
+          {uniqueContractors.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+
+        <select 
+          value={responsiblePersonFilter}
+          onChange={(e) => setResponsiblePersonFilter(e.target.value)}
+          className="px-4 py-2 rounded-xl text-xs font-bold transition-all border bg-white text-neutral-500 border-neutral-200 hover:border-neutral-300 outline-none"
+        >
+          <option value="All">ผู้รับผิดชอบ: ทั้งหมด</option>
+          {uniqueResponsiblePersons.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
       </div>
 
       {/* Bulk Actions Bar */}
@@ -1291,6 +1347,34 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
                     onChange={e => setFormData({...formData, lng: Number(e.target.value)})}
                   />
                 </div>
+
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest">รูปภาพโครงการ (สูงสุด 5 รูป)</label>
+                  <input 
+                    type="file" 
+                    multiple
+                    accept="image/*"
+                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-neutral-900 outline-none"
+                    onChange={e => {
+                      if (e.target.files) {
+                        const files = Array.from(e.target.files).slice(0, 5);
+                        setSelectedFiles(files);
+                      }
+                    }}
+                  />
+                  {selectedFiles.length > 0 && (
+                    <p className="text-xs text-neutral-500 mt-2">
+                      เลือกแล้ว {selectedFiles.length} รูป
+                    </p>
+                  )}
+                  {formData.images && formData.images.length > 0 && (
+                    <div className="flex gap-2 mt-2 overflow-x-auto">
+                      {formData.images.map((img, idx) => (
+                        <img key={idx} src={img.url} alt={img.name} className="w-16 h-16 object-cover rounded-lg" />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </form>
 
@@ -1298,14 +1382,16 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({ typeFilter, title
               <button 
                 onClick={() => setIsModalOpen(false)}
                 className="px-6 py-3 text-neutral-500 font-bold hover:text-neutral-900 transition-colors"
+                disabled={uploadingImages}
               >
                 ยกเลิก
               </button>
               <button 
                 onClick={handleSave}
-                className="px-8 py-3 bg-orange-600 text-white rounded-xl font-bold hover:bg-orange-700 shadow-lg shadow-orange-900/20 transition-all"
+                disabled={uploadingImages}
+                className="px-8 py-3 bg-orange-600 text-white rounded-xl font-bold hover:bg-orange-700 shadow-lg shadow-orange-900/20 transition-all disabled:opacity-50"
               >
-                บันทึกข้อมูล
+                {uploadingImages ? 'กำลังอัปโหลด...' : 'บันทึกข้อมูล'}
               </button>
             </div>
           </div>
