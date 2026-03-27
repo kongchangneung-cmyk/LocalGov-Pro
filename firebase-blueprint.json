@@ -106,6 +106,42 @@
         "importDate": { "type": "string", "format": "date-time" }
       },
       "required": ["fiscalYear", "projectName", "budget"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notifications for users",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Recipient user ID" },
+        "title": { "type": "string", "description": "Notification title" },
+        "message": { "type": "string", "description": "Notification message" },
+        "type": { "type": "string", "enum": ["info", "warning", "error", "success"], "description": "Notification type" },
+        "read": { "type": "boolean", "description": "Read status" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "link": { "type": "string", "description": "Optional link to a resource" },
+        "projectId": { "type": "string", "description": "Optional related project ID" }
+      },
+      "required": ["userId", "title", "message", "type", "read", "createdAt"]
+    },
+    "Maintenance": {
+      "title": "Maintenance",
+      "description": "Maintenance request and tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Maintenance ID" },
+        "title": { "type": "string", "description": "Maintenance title" },
+        "description": { "type": "string", "description": "Detailed description" },
+        "location": { "type": "string", "description": "Location description" },
+        "lat": { "type": "number", "description": "Latitude" },
+        "lng": { "type": "number", "description": "Longitude" },
+        "status": { "type": "string", "enum": ["Pending", "In Progress", "Completed"], "description": "Current status" },
+        "category": { "type": "string", "enum": ["Road", "Electricity", "Water", "Other"], "description": "Maintenance category" },
+        "reporter": { "type": "string", "description": "Reporter name" },
+        "reportDate": { "type": "string", "format": "date-time", "description": "Report timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" },
+        "photos": { "type": "array", "items": { "type": "string" }, "description": "Photo URLs" }
+      },
+      "required": ["id", "title", "status", "category", "reportDate"]
     }
   },
   "firestore": {
@@ -136,6 +172,14 @@
     "/budget_imports/{importId}": {
       "schema": "BudgetImport",
       "description": "Imported budget records"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notification documents"
+    },
+    "/maintenance/{maintenanceId}": {
+      "schema": "Maintenance",
+      "description": "Maintenance request documents"
     }
   }
 }

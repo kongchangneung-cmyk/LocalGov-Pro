@@ -10,9 +10,11 @@ import {
   CheckCircle2,
   Clock,
   ChevronRight,
-  ArrowRight
+  ArrowRight,
+  X
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { notifyProjectUpdate } from '../utils/notificationService';
 
 interface ProgressReport {
   id: string;
@@ -36,7 +38,32 @@ const ProgressTracking: React.FC = () => {
     progressPercent: 0,
     details: '',
     issues: '',
+    photos: [] as string[],
   });
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        setFormData(prev => ({
+          ...prev,
+          photos: [...prev.photos, base64String]
+        }));
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removePhoto = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      photos: prev.photos.filter((_, i) => i !== index)
+    }));
+  };
 
   useEffect(() => {
     const q = query(collection(db, 'projects'), orderBy('updatedAt', 'desc'));
@@ -73,7 +100,6 @@ const ProgressTracking: React.FC = () => {
       await addDoc(collection(db, 'progress_reports'), {
         ...formData,
         projectId: selectedProject.id,
-        photos: []
       });
 
       // 2. Update Project Progress
@@ -82,12 +108,18 @@ const ProgressTracking: React.FC = () => {
         updatedAt: new Date().toISOString()
       });
 
+      // 3. Notify relevant users
+      if (formData.progressPercent !== selectedProject.progress) {
+        await notifyProjectUpdate(selectedProject.name, selectedProject.id, 'progress', formData.progressPercent);
+      }
+
       setIsModalOpen(false);
       setFormData({
         reportDate: new Date().toISOString().split('T')[0],
         progressPercent: 0,
         details: '',
         issues: '',
+        photos: [],
       });
     } catch (error) {
       console.error('Error saving report:', error);
@@ -189,14 +221,20 @@ const ProgressTracking: React.FC = () => {
                         </div>
                       )}
 
-                      <div className="flex items-center gap-2">
-                        <div className="w-20 h-20 bg-neutral-100 rounded-xl flex items-center justify-center border border-neutral-200 border-dashed">
-                          <ImageIcon className="w-6 h-6 text-neutral-300" />
+                      {report.photos && report.photos.length > 0 && (
+                        <div className="flex flex-wrap gap-3">
+                          {report.photos.map((photo, pIdx) => (
+                            <div key={pIdx} className="w-24 h-24 rounded-xl overflow-hidden border border-neutral-200 shadow-sm">
+                              <img 
+                                src={photo} 
+                                alt={`Progress ${pIdx + 1}`} 
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+                          ))}
                         </div>
-                        <div className="w-20 h-20 bg-neutral-100 rounded-xl flex items-center justify-center border border-neutral-200 border-dashed">
-                          <ImageIcon className="w-6 h-6 text-neutral-300" />
-                        </div>
-                      </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -271,6 +309,35 @@ const ProgressTracking: React.FC = () => {
                   value={formData.issues}
                   onChange={e => setFormData({...formData, issues: e.target.value})}
                 />
+              </div>
+
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest">รูปภาพหน้างาน</label>
+                <div className="flex flex-wrap gap-3">
+                  {formData.photos.map((photo, index) => (
+                    <div key={index} className="relative w-20 h-20 rounded-xl overflow-hidden border border-neutral-200 group">
+                      <img src={photo} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <button 
+                        type="button"
+                        onClick={() => removePhoto(index)}
+                        className="absolute inset-0 bg-red-500/80 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                  ))}
+                  <label className="w-20 h-20 bg-neutral-50 border-2 border-dashed border-neutral-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-neutral-100 hover:border-neutral-300 transition-all">
+                    <Plus className="w-6 h-6 text-neutral-400" />
+                    <span className="text-[10px] font-bold text-neutral-400 mt-1">เพิ่มรูป</span>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      multiple 
+                      className="hidden" 
+                      onChange={handleFileChange}
+                    />
+                  </label>
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-4">

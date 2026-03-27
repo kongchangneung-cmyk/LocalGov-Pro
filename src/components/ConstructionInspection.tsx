@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { db, collection, onSnapshot, query, orderBy, addDoc } from '../firebase';
 import { Project } from './Dashboard';
+import { useAuth } from '../useAuth';
+import { notifyInspectionFailure } from '../utils/notificationService';
 import { 
   ClipboardCheck, 
   Plus, 
@@ -27,6 +29,7 @@ interface Inspection {
 }
 
 const ConstructionInspection: React.FC = () => {
+  const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -72,6 +75,13 @@ const ConstructionInspection: React.FC = () => {
         ...formData,
         photos: []
       });
+
+      // Trigger notification if inspection failed
+      if (formData.result === 'Fail' && user) {
+        const project = projects.find(p => p.id === formData.projectId);
+        await notifyInspectionFailure(user.uid, project?.name || 'Unknown Project', formData.projectId);
+      }
+
       setIsModalOpen(false);
       setFormData({
         projectId: '',

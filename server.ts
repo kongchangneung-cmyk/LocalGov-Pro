@@ -2,8 +2,6 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { google } from 'googleapis';
-import admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 
@@ -24,39 +22,16 @@ try {
   console.error('Error loading Firebase config:', error);
 }
 
-// Initialize Firebase Admin
-if (!admin.apps.length) {
-  const projectId = firebaseConfig.projectId;
-  console.log('Initializing Firebase Admin with project ID:', projectId);
-  admin.initializeApp({
-    projectId: projectId,
-  });
-}
-
-const databaseId = firebaseConfig.firestoreDatabaseId || '(default)';
-console.log('Connecting to Firestore database:', databaseId);
-const db = getFirestore(databaseId);
-
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
 
-  // Test Firestore connection on startup
-  try {
-    console.log('Testing Firestore connection...');
-    await db.collection('projects').limit(1).get();
-    console.log('Firestore connection successful');
-  } catch (error) {
-    console.error('Firestore connection test failed:', error);
-  }
-
   // API Routes
   app.get('/api/debug/status', (req, res) => {
     res.json({
       projectId: firebaseConfig.projectId,
-      databaseId,
       env: {
         GOOGLE_CLOUD_PROJECT: process.env.GOOGLE_CLOUD_PROJECT,
         FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
@@ -66,41 +41,15 @@ async function startServer() {
   });
 
   app.post('/api/import-budget', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const idToken = authHeader.split('Bearer ')[1];
+    // This endpoint is now handled client-side or just returns the data
     try {
-      const decodedToken = await admin.auth().verifyIdToken(idToken);
-      const userDoc = await db.collection('users').doc(decodedToken.uid).get();
-      const userData = userDoc.data();
-
-      if (!userData || userData.role !== 'admin') {
-        return res.status(403).json({ error: 'Forbidden' });
-      }
-
       const budgetDataPath = path.join(__dirname, 'budget_data.json');
       if (!fs.existsSync(budgetDataPath)) {
         return res.status(404).json({ error: 'Budget data file not found' });
       }
 
       const budgetData = JSON.parse(fs.readFileSync(budgetDataPath, 'utf8'));
-      const batch = db.batch();
-      const importDate = new Date().toISOString();
-
-      budgetData.forEach((item: any, index: number) => {
-        const importRef = db.collection('budget_imports').doc();
-        batch.set(importRef, {
-          ...item,
-          importDate,
-          id: importRef.id
-        });
-      });
-
-      await batch.commit();
-      res.json({ message: `Successfully imported ${budgetData.length} budget records` });
+      res.json({ data: budgetData });
     } catch (error) {
       console.error('Import error:', error);
       res.status(500).json({ error: 'Internal Server Error' });
@@ -108,21 +57,7 @@ async function startServer() {
   });
 
   app.post('/api/sync', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const idToken = authHeader.split('Bearer ')[1];
     try {
-      const decodedToken = await admin.auth().verifyIdToken(idToken);
-      const userDoc = await db.collection('users').doc(decodedToken.uid).get();
-      const userData = userDoc.data();
-
-      if (!userData || userData.role !== 'admin') {
-        return res.status(403).json({ error: 'Forbidden' });
-      }
-
       // Google Sheets Sync Logic
       const sheetId = process.env.GOOGLE_SHEETS_ID;
       const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
@@ -144,14 +79,12 @@ async function startServer() {
 
       const rows = response.data.values;
       if (!rows || rows.length === 0) {
-        return res.json({ message: 'No data found in Google Sheets' });
+        return res.json({ message: 'No data found in Google Sheets', data: [] });
       }
 
-      const batch = db.batch();
-      rows.forEach((row) => {
+      const projects = rows.map((row) => {
         const [id, name, type, budget, status, progress, lat, lng, updatedAt] = row;
-        const projectRef = db.collection('projects').doc(id);
-        batch.set(projectRef, {
+        return {
           id,
           name,
           type,
@@ -161,11 +94,10 @@ async function startServer() {
           lat: parseFloat(lat) || 0,
           lng: parseFloat(lng) || 0,
           updatedAt: updatedAt || new Date().toISOString(),
-        });
+        };
       });
 
-      await batch.commit();
-      res.json({ message: `Successfully synced ${rows.length} projects` });
+      res.json({ message: `Successfully fetched ${rows.length} projects`, data: projects });
     } catch (error) {
       console.error('Sync error:', error);
       res.status(500).json({ error: 'Internal Server Error' });

@@ -6,12 +6,13 @@ import AdminDashboard from './AdminDashboard';
 import ProjectManagement from './ProjectManagement';
 import ProgressTracking from './ProgressTracking';
 import ConstructionInspection from './ConstructionInspection';
-import BudgetDisbursement from './BudgetDisbursement';
 import DocumentManagement from './DocumentManagement';
-import GISMapManagement from './GISMapManagement';
 import ReportModule from './ReportModule';
 import UserManagement from './UserManagement';
 import BudgetImportList from './BudgetImportList';
+import SystemSettings from './SystemSettings';
+import MaintenanceManagement from './MaintenanceManagement';
+import NotificationComposer from './NotificationComposer';
 
 const AdminLayout: React.FC = () => {
   const { logout, isAdmin, isDirector, isEngineer, isStaff } = useAuth();
@@ -38,13 +39,16 @@ const AdminLayout: React.FC = () => {
     switch (activeTab) {
       case 'dashboard': return <AdminDashboard />;
       case 'projects': return <ProjectManagement />;
+      case 'infrastructure': return <ProjectManagement typeFilter="โครงสร้างพื้นฐาน" title="โครงสร้างพื้นฐาน (Infrastructure)" />;
+      case 'maintenance': return <MaintenanceManagement />;
+      case 'building_control': return <ProjectManagement typeFilter="อาคาร" title="ควบคุมอาคาร (Building Control)" />;
       case 'budget_import': return <BudgetImportList />;
       case 'progress': return <ProgressTracking />;
       case 'inspections': return <ConstructionInspection />;
-      case 'budget': return <BudgetDisbursement />;
       case 'documents': return <DocumentManagement />;
-      case 'gis': return <GISMapManagement />;
       case 'reports': return <ReportModule />;
+      case 'notifications': return <NotificationComposer />;
+      case 'settings': return <SystemSettings />;
       case 'users': return <UserManagement />;
       default: return <AdminDashboard />;
     }

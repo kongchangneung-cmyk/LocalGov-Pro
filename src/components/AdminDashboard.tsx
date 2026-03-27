@@ -255,18 +255,22 @@ interface StatCardProps {
 }
 
 const StatCard: React.FC<StatCardProps> = ({ label, value, icon: Icon, color, trend, trendUp }) => (
-  <div className="bg-white p-6 rounded-2xl border border-neutral-200 shadow-sm hover:shadow-md transition-shadow">
-    <div className="flex items-center justify-between mb-4">
-      <div className={`w-12 h-12 ${color} rounded-xl flex items-center justify-center shadow-lg`}>
+  <div className="bg-white p-6 rounded-[2rem] border border-neutral-100 shadow-sm hover:shadow-xl transition-all group relative overflow-hidden">
+    <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 rounded-full -mr-12 -mt-12 blur-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
+    <div className="flex items-center justify-between mb-6 relative z-10">
+      <div className={`w-12 h-12 ${color} rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-500`}>
         <Icon className="text-white w-6 h-6" />
       </div>
-      <div className={`flex items-center gap-1 text-[10px] font-bold ${trendUp ? 'text-green-600' : 'text-red-600'}`}>
+      <div className={`flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full ${trendUp ? 'text-emerald-600 bg-emerald-50 border border-emerald-100' : 'text-rose-600 bg-rose-50 border border-rose-100'}`}>
         {trendUp ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
         {trend}
       </div>
     </div>
-    <p className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">{label}</p>
-    <p className="text-3xl font-black text-neutral-900">{value}</p>
+    <p className="text-neutral-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1">{label}</p>
+    <div className="flex items-baseline gap-2">
+      <h3 className="text-4xl font-black text-[#0f172a]">{value.toLocaleString()}</h3>
+      {label.includes('งบประมาณ') && <span className="text-xs font-bold text-neutral-300 uppercase">บาท</span>}
+    </div>
   </div>
 );
 

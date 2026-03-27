@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import Sidebar from './Sidebar';
-import { Menu, X, Bell, Search, User, ShieldCheck } from 'lucide-react';
+import { Menu, X, Search, User } from 'lucide-react';
 import { useAuth } from '../useAuth';
+import NotificationDropdown from './NotificationDropdown';
 
 const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -38,10 +39,7 @@ const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               <span className="text-xs font-bold text-neutral-600 uppercase tracking-widest">Live Sync</span>
             </div>
             
-            <button className="p-2.5 text-neutral-500 hover:bg-neutral-100 rounded-xl transition-all border border-transparent hover:border-neutral-200 relative">
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-2.5 right-2.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
-            </button>
+            <NotificationDropdown />
             
             <div className="h-8 w-px bg-neutral-200 mx-2" />
             

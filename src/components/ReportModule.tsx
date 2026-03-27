@@ -54,6 +54,15 @@ const ReportModule: React.FC = () => {
     alert(`กำลังส่งออกรายงานในรูปแบบ ${format}...`);
   };
 
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('th-TH', {
+      style: 'currency',
+      currency: 'THB',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  };
+
   return (
     <div className="space-y-8">
       {/* Report Filters & Actions */}
@@ -191,7 +200,7 @@ const ReportModule: React.FC = () => {
                     <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">{project.type}</span>
                   </td>
                   <td className="px-8 py-4">
-                    <span className="text-sm font-black text-neutral-900">฿{project.budget.toLocaleString()}</span>
+                    <span className="text-sm font-black text-neutral-900">{formatCurrency(project.budget)}</span>
                   </td>
                   <td className="px-8 py-4">
                     <div className="flex items-center gap-3">

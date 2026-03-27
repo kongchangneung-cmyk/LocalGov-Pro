@@ -17,7 +17,9 @@ import {
   ShieldCheck,
   User as UserIcon,
   ChevronRight,
-  Settings
+  Settings,
+  Bell,
+  MapPin
 } from 'lucide-react';
 
 const Sidebar: React.FC<{ isOpen: boolean; setIsOpen: (open: boolean) => void }> = ({ isOpen, setIsOpen }) => {
@@ -25,15 +27,14 @@ const Sidebar: React.FC<{ isOpen: boolean; setIsOpen: (open: boolean) => void }>
   const location = useLocation();
 
   const menuItems = [
-    { id: 'overview', label: 'ภาพรวมแดชบอร์ด', icon: LayoutDashboard, path: '/', roles: ['admin', 'director', 'engineer', 'staff', 'viewer'] },
-    { id: 'projects', label: 'จัดการโครงการ', icon: HardHat, path: '/admin?tab=projects', roles: ['admin', 'staff', 'engineer'] },
-    { id: 'budget_import', label: 'งบประมาณ 2569', icon: FileText, path: '/admin?tab=budget_import', roles: ['admin', 'staff', 'engineer'] },
-    { id: 'progress', label: 'ติดตามความก้าวหน้า', icon: TrendingUp, path: '/admin?tab=progress', roles: ['admin', 'engineer', 'staff'] },
-    { id: 'inspections', label: 'ตรวจงานก่อสร้าง', icon: ClipboardCheck, path: '/admin?tab=inspections', roles: ['admin', 'engineer'] },
-    { id: 'budget', label: 'งบประมาณและการเบิกจ่าย', icon: Wallet, path: '/admin?tab=budget', roles: ['admin', 'staff'] },
-    { id: 'gis', label: 'แผนที่โครงการ (GIS)', icon: MapIcon, path: '/admin?tab=gis', roles: ['admin', 'staff', 'engineer'] },
-    { id: 'reports', label: 'รายงาน', icon: BarChart3, path: '/admin?tab=reports', roles: ['admin', 'director', 'staff'] },
-    { id: 'users', label: 'จัดการผู้ใช้งาน', icon: Users, path: '/admin?tab=users', roles: ['admin'] },
+    { id: 'overview', label: 'Dashboard (ภาพรวม)', icon: LayoutDashboard, path: '/admin', roles: ['admin', 'director', 'engineer', 'staff', 'viewer'] },
+    { id: 'infrastructure', label: 'โครงสร้างพื้นฐาน (Infrastructure)', icon: HardHat, path: '/admin/manage?tab=infrastructure', roles: ['admin', 'staff', 'engineer'] },
+    { id: 'maintenance', label: 'งานซ่อมบำรุง (Maintenance)', icon: TrendingUp, path: '/admin/manage?tab=maintenance', roles: ['admin', 'engineer', 'staff'] },
+    { id: 'building_control', label: 'ควบคุมอาคาร (Building Control)', icon: ClipboardCheck, path: '/admin/manage?tab=building_control', roles: ['admin', 'engineer'] },
+    { id: 'reports', label: 'รายงานและสถิติ', icon: BarChart3, path: '/admin/manage?tab=reports', roles: ['admin', 'director', 'staff'] },
+    { id: 'notifications', label: 'ส่งการแจ้งเตือน', icon: Bell, path: '/admin/manage?tab=notifications', roles: ['admin'] },
+    { id: 'settings', label: 'ตั้งค่าระบบและสำรองข้อมูล', icon: Settings, path: '/admin/manage?tab=settings', roles: ['admin'] },
+    { id: 'users', label: 'จัดการผู้ใช้งาน', icon: Users, path: '/admin/manage?tab=users', roles: ['admin'] },
   ];
 
   const filteredMenuItems = menuItems.filter(item => 
@@ -41,8 +42,8 @@ const Sidebar: React.FC<{ isOpen: boolean; setIsOpen: (open: boolean) => void }>
   );
 
   const isActive = (path: string) => {
-    if (path === '/') return location.pathname === '/';
-    return location.pathname === '/admin' && location.search.includes(path.split('=')[1]);
+    if (path === '/admin') return location.pathname === '/admin';
+    return location.pathname === '/admin/manage' && location.search.includes(path.split('=')[1]);
   };
 
   return (

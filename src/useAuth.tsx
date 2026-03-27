@@ -22,6 +22,7 @@ interface AuthContextType {
   isDirector: boolean;
   isEngineer: boolean;
   isStaff: boolean;
+  canAccessAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -86,11 +87,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isDirector = profile?.role === 'director' || isAdmin;
   const isEngineer = profile?.role === 'engineer' || isAdmin;
   const isStaff = profile?.role === 'staff' || isAdmin;
+  const canAccessAdmin = profile && ['admin', 'director', 'engineer', 'staff'].includes(profile.role);
 
   return (
     <AuthContext.Provider value={{ 
       user, profile, loading, login, logout, 
-      isAdmin, isDirector, isEngineer, isStaff 
+      isAdmin, isDirector, isEngineer, isStaff,
+      canAccessAdmin: !!canAccessAdmin
     }}>
       {children}
     </AuthContext.Provider>
